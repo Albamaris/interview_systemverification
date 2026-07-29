@@ -1074,7 +1074,9 @@ public async completionStateShouldBe(item: string, state: unknown) {
 gauge run specs
 ```
 
-**Status:** ⏳ ausstehend — bitte Ergebnis mitteilen
+**Ergebnis:** Grün, committet und gepusht.
+
+**Status:** ✅ Finale, konsequent datengetriebene Spec-Struktur steht
 
 ---
 
