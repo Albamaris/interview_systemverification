@@ -1283,7 +1283,197 @@ wandert.
 gauge run specs/add_todo_from_csv.spec
 ```
 
-**Status:** ⏳ ausstehend — bitte Ergebnis mitteilen
+**Ergebnis:** Grün, gepusht. ✅
+
+---
+
+## Schritt 22: Minimal-System mit echter Datenbank (SQLite)
+
+**Ziel:** Testdaten aus einer Datenbank BEZIEHEN und Testergebnisse dorthin
+ZURÜCKSCHREIBEN — ein "Minimal-System, das auch wirklich funktioniert",
+kein Fake.
+
+**Wahl der Datenbank: SQLite über Node's eingebautes `node:sqlite`-Modul**
+(kein npm-Paket nötig!). Begründung:
+- Dateibasiert, kein DB-Server nötig — läuft lokal, in Docker, in CI
+  identisch.
+- Kein natives Kompilieren nötig (Risiko z.B. bei `better-sqlite3` ohne
+  Build-Tools) — `node:sqlite` ist in Node 22+ eingebaut.
+- **Verifiziert vor dem Einbau:** Kurzer Node-Test lokal (`node -e ...`)
+  bestätigte, dass `node:sqlite` mit Node 22.14.0 direkt funktioniert (nur
+  eine "experimental"-Warnung, kein Fehler). Zusätzlich per
+  `docker run mcr.microsoft.com/playwright:v1.62.0-noble node -v` geprüft:
+  Das Docker-Image bringt sogar Node **v24.18.0** mit — `node:sqlite` also
+  auch dort verfügbar.
+
+**Neue Datei `tests/db.ts`:**
+```typescript
+import { DatabaseSync } from "node:sqlite";
+import { join } from "path";
+
+const DB_PATH = join(process.cwd(), "testdata", "gauge.db");
+let db: DatabaseSync | undefined;
+
+export function getDb(): DatabaseSync {
+    if (!db) {
+        db = new DatabaseSync(DB_PATH);
+        db.exec(`CREATE TABLE IF NOT EXISTS todos (
+            id INTEGER PRIMARY KEY AUTOINCREMENT, description TEXT NOT NULL);`);
+        db.exec(`CREATE TABLE IF NOT EXISTS test_results (
+            id INTEGER PRIMARY KEY AUTOINCREMENT, spec_name TEXT,
+            scenario_name TEXT, status TEXT, executed_at TEXT);`);
+        const row = db.prepare("SELECT COUNT(*) as count FROM todos").get() as { count: number };
+        if (row.count === 0) {
+            const insert = db.prepare("INSERT INTO todos (description) VALUES (?)");
+            insert.run("Buy milk");
+            insert.run("Walk the dog");
+            insert.run("Clean the house");
+        }
+    }
+    return db;
+}
+
+export function getAllTodoDescriptions(): string[] {
+    const rows = getDb().prepare("SELECT description FROM todos ORDER BY id").all() as { description: string }[];
+    return rows.map((row) => row.description);
+}
+
+export function recordTestResult(specName: string | null | undefined, scenarioName: string | null | undefined, status: string) {
+    getDb()
+        .prepare("INSERT INTO test_results (spec_name, scenario_name, status, executed_at) VALUES (?, ?, ?, ?)")
+        .run(specName ?? "unknown", scenarioName ?? "unknown", status, new Date().toISOString());
+}
+```
+Schema wird beim ersten Zugriff selbst angelegt + mit Startdaten befüllt
+(idempotent — nur wenn `todos` leer ist). Deshalb `testdata/gauge.db`
+NICHT committen (`.gitignore` ergänzt) — sie entsteht/verändert sich bei
+jedem Lauf von selbst, genau wie `reports/`.
+
+**Recherche vor dem Einbau — wie kommt man an Pass/Fail-Status im
+`@AfterScenario`-Hook?** In den `gauge-ts`-Quellen nachgesehen
+(`HookExecutionProcessor.js`): Hooks werden mit einem `ExecutionContext`-
+Argument aufgerufen (`executeMethod(hook.getInstance(), hook.getMethod(),
+[context])`). `ExecutionContext.getCurrentScenario().getIsFailing()` und
+`.getCurrentSpec().getName()` liefern genau das, was für einen
+Testergebnis-Datensatz gebraucht wird. `ExecutionContext` wird von
+`gauge-ts` auch öffentlich exportiert.
+
+**Angepasste Hooks in `tests/StepImplementation.ts`:**
+```typescript
+@BeforeSuite()
+public async beforeSuite() {
+    this.browser = await chromium.launch({ headless: process.env.HEADLESS !== "false" });
+    getDb(); // erstellt/befüllt testdata/gauge.db beim ersten Zugriff
+}
+
+@AfterSuite()
+public async afterSuite() {
+    await this.browser.close();
+    const results = getDb().prepare(
+        "SELECT scenario_name, status, executed_at FROM test_results ORDER BY id DESC LIMIT 20"
+    ).all();
+    console.log("Last test results written to testdata/gauge.db:");
+    console.log(results);
+}
+
+@AfterScenario()
+public async afterScenario(context: ExecutionContext) {
+    await this.page.close();
+    const scenario = context.getCurrentScenario();
+    const spec = context.getCurrentSpec();
+    recordTestResult(spec?.getName(), scenario?.getName(), scenario?.getIsFailing() ? "FAILED" : "PASSED");
+}
+```
+
+**Neue Steps (Daten aus der DB lesen, analog zum CSV-Muster):**
+```typescript
+@Step("Add todo items from the database")
+public async addTodoItemsFromDatabase() {
+    const input = this.page.getByPlaceholder("What needs to be done?");
+    for (const description of getAllTodoDescriptions()) {
+        await input.fill(description);
+        await input.press("Enter");
+    }
+}
+
+@Step("All todo items from the database should be visible")
+public async allTodoItemsFromDatabaseShouldBeVisible() {
+    for (const description of getAllTodoDescriptions()) {
+        const todo = this.page.getByTestId("todo-title").filter({ hasText: description });
+        await todo.waitFor({ state: "visible" });
+        assert.ok(await todo.isVisible());
+    }
+}
+```
+
+**`specs/add_todo_from_db.spec`:**
+```markdown
+# Add Todo Items From Database
+tags: jira-QAT-105, todo, add, database, regression
+
+## Add todo items loaded from the database
+* Open the todo app
+* Add todo items from the database
+* All todo items from the database should be visible
+```
+
+**Nebenbefund beim Sanity-Check (`npx tsc --noEmit`):**
+1. Der ursprüngliche Fix aus Schritt 4 (`"ignoreDeprecations": "6.0"`) war
+   tatsächlich FALSCH — im TypeScript-Quellcode nachgesehen
+   (`node_modules/typescript/lib/typescript.js`): Diese TS-Version
+   (5.9.3) akzeptiert für `ignoreDeprecations` NUR den exakten String
+   `"5.0"`, obwohl die Warnmeldung selbst (irreführend) `"6.0"` vorschlägt.
+   Korrigiert auf `"5.0"`.
+2. `skipLibCheck: true` ergänzt — `playwright-core`s eigene `.d.ts`-Dateien
+   referenzieren DOM-Typen (`HTMLElement` etc.), die durch unser
+   `"lib": ["es2016"]` (kein `"dom"`) fehlen. Das fiel nie auf, weil
+   `gauge run` über `ts-node` offenbar transpile-only läuft (kein voller
+   Type-Check) — Standard-Praxis, Typprüfung von Fremd-Deklarationen zu
+   überspringen, nur eigenen Code prüfen.
+
+**Talking Point:** Genau dieser Sanity-Check (`npx tsc --noEmit`) VOR dem
+eigentlichen Testlauf ist guter Prozess — Kompilierfehler früh und isoliert
+finden, statt sie erst mitten in einem laufenden `gauge run` zu entdecken.
+
+**Befehl (im Terminal ausführen):**
+```
+gauge run specs/add_todo_from_db.spec
+gauge run specs
+```
+Danach `testdata/gauge.db` sollte existieren; die Konsolen-Ausgabe von
+`afterSuite` zeigt die zuletzt geschriebenen `test_results`-Zeilen —
+sichtbarer Beweis für "lesen UND schreiben".
+
+**Ergebnis:** Funktioniert vollständig. `testdata/gauge.db` wurde erzeugt,
+`test_results`-Tabelle enthält reale Zeilen (Spec-Name, Szenario-Name,
+Status, Zeitstempel) für jeden gelaufenen Test — z.B.:
+```
+1|Add Todo Items From Database|Add todo items loaded from the database|PASSED|2026-07-29T14:09:43.688Z
+2|Add Todo Items|Add a todo item and verify it appears|PASSED|2026-07-29T14:09:51.971Z
+...
+```
+Lesen (Testdaten aus `todos`) UND Schreiben (Ergebnisse in `test_results`)
+beide bestätigt.
+
+**Bonus: DB-Inhalt ansehen.** Auf dem Rechner bereits ein `sqlite3`-CLI
+vorhanden (kommt mit dem Android SDK unter
+`%LOCALAPPDATA%\Android\Sdk\platform-tools\sqlite3.exe`):
+```powershell
+& "$env:LOCALAPPDATA\Android\Sdk\platform-tools\sqlite3.exe" testdata\gauge.db ".tables" "SELECT * FROM todos;" "SELECT * FROM test_results;"
+```
+Zusätzlich VS-Code-Extension **"SQLite Viewer"** (`qwtel.sqlite-viewer`)
+installiert — `.db`-Datei im Explorer anklicken öffnet eine Tabellen-Ansicht
+direkt im Editor, praktisch für eine Live-Demo im Interview.
+
+**Status:** ✅ Minimal-System mit echter DB-Anbindung steht und funktioniert
+
+**Befehl (im Terminal ausführen, committen/pushen):**
+```
+git add tests specs .gitignore tsconfig.json package.json package-lock.json
+git status
+git commit -m "Add SQLite-backed test data source and result recording"
+git push
+```
 
 ---
 
