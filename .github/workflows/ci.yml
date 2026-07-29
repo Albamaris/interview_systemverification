@@ -5,6 +5,14 @@ on:
     branches: [ master ]
   pull_request:
     branches: [ master ]
+  schedule:
+    # Läuft täglich um 02:00 UTC (unabhängig von Pushes) — z.B. um
+    # Umgebungs-/Drittanbieter-Drift (Browser-Updates, Ziel-Website-Änderungen)
+    # frühzeitig zu erkennen, auch wenn niemand Code geändert hat.
+    - cron: '0 2 * * *'
+  workflow_dispatch:
+    # Erlaubt manuelles Auslösen über den "Run workflow"-Button im Actions-Tab
+    # (praktisch, um den Schedule-Lauf zu testen, ohne zu warten)
 
 jobs:
   test:
