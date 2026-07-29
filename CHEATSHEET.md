@@ -611,4 +611,710 @@ git commit -m "Gauge + Playwright + Docker demo framework"
 `gauge_version_output.txt`) — `node_modules`, `reports`, Gauge-Metadaten
 werden also automatisch NICHT committet.
 
+**Ergebnis:** `git init/add/commit` erfolgreich. Nutzer hat den Standard-
+Branch bewusst zu `master` umbenannt (statt `main`, alte Gewohnheit).
+
+**Status:** ✅
+
+---
+
+## Schritt 13: Push zu GitHub
+
+**Repo (vom Nutzer manuell angelegt):**
+`https://github.com/Albamaris/interview_systemverification.git`
+
+**Befehl (im Terminal ausgeführt):**
+```
+git branch -M main
+git remote add origin https://github.com/Albamaris/interview_systemverification.git
+git push -u origin main
+```
+→ tatsächlich als `master` gepusht (siehe oben).
+
+⚠️ **Wichtige Korrektur:** Der Workflow-Trigger stand auf `branches: [ main ]`,
+gepusht wurde aber auf `master` → Pipeline wäre NICHT automatisch gestartet.
+Fix: `.github/workflows/ci.yml` auf `branches: [ master ]` angepasst,
+committet und erneut gepusht.
+
+**Merksatz fürs Interview:** Der CI-Trigger-Branch in der Workflow-Datei
+muss exakt zum tatsächlichen Standard-Branch des Repos passen — ein
+klassischer, leicht zu übersehener Stolperstein bei CI/CD-Setups.
+
+**Ergebnis (GitHub Actions):**
+```
+Workflow: Gauge Playwright Tests #1
+Status:   ✅ Success (52s)
+Branch:   master
+Commit:   02e6387 "Fix CI trigger branch to master"
+```
+
+**Status:** ✅ Kompletter Kreis geschlossen: lokal → Docker → GitHub Actions,
+überall grün.
+
+---
+
+## Schritt 14: Scheduled Run ergänzen
+
+**Ergänzung in `.github/workflows/ci.yml`:**
+```yaml
+on:
+  push:
+    branches: [ master ]
+  pull_request:
+    branches: [ master ]
+  schedule:
+    - cron: '0 2 * * *'
+  workflow_dispatch:
+```
+
+**Warum:**
+- `schedule` mit Cron-Syntax (`Minute Stunde Tag Monat Wochentag`, hier
+  täglich 02:00 UTC) lässt die Pipeline **unabhängig von Code-Änderungen**
+  laufen. Talking Point: Fängt Drift ab, den ein reiner Push-Trigger nicht
+  sieht — z.B. ein Playwright-/Browser-Update, das plötzlich Locators
+  bricht, oder eine Änderung auf der getesteten Ziel-Website selbst
+  (typischer Grund für "nightly regression runs" in echten Projekten).
+- `workflow_dispatch` (Bonus, oft zusammen mit `schedule` eingesetzt):
+  erlaubt manuelles Auslösen über den "Run workflow"-Button im GitHub-
+  Actions-Tab — praktisch, um den Cron-Job zu testen, ohne bis 02:00 Uhr
+  zu warten.
+
+**Hinweis:** GitHub Actions Cron-Zeiten sind IMMER UTC, nicht Lokalzeit —
+bei 02:00 UTC im Sommer (MESZ, UTC+2) wäre das 04:00 Uhr deutscher Zeit.
+
+**Befehl (im Terminal ausführen):**
+```
+git add .github/workflows/ci.yml
+git commit -m "Add scheduled nightly run and manual trigger to CI pipeline"
+git push
+```
+
 **Status:** ⏳ ausstehend — bitte Ergebnis mitteilen
+
+---
+
+## Schritt 15: Push-getriggerte Pipeline simulieren
+
+**Ziel:** Den `on: push`-Trigger (seit Schritt 13 aktiv) bewusst live
+durchspielen — ein Entwickler committet eine kleine Änderung, pusht, die
+Pipeline startet automatisch (kein `workflow_dispatch`, kein `schedule`).
+
+**Simulierte "Entwickler-Änderung":** Neues Szenario `Add multiple todo
+items`, das zusätzlich Gauges **Tabellen-Parameter** demonstriert (bisher
+nicht gezeigt — guter Bonus-Talking-Point).
+
+**`specs/todo.spec`, neues Szenario:**
+```markdown
+## Add multiple todo items
+* Open the todo app
+* Add todos
+
+   |description     |
+   |-----------------|
+   |Buy milk         |
+   |Walk the dog     |
+   |Clean the house  |
+
+* Todo "Buy milk" should be visible
+* Todo "Walk the dog" should be visible
+* Todo "Clean the house" should be visible
+```
+
+**`tests/StepImplementation.ts`, neuer Step:**
+```typescript
+@Step("Add todos <table>")
+public async addTodos(table: Table) {
+    const input = this.page.getByPlaceholder("What needs to be done?");
+    for (const row of table.getTableRows()) {
+        await input.fill(row.getCell("description"));
+        await input.press("Enter");
+    }
+}
+```
+(`Table` zusätzlich aus `"gauge-ts"` importiert.)
+
+**Talking Point Tabellen:** Eine Markdown-Tabelle direkt unter einem Step
+wird automatisch als `<table>`-Parameter erkannt — kein `<table>` im
+Spec-Text nötig, nur in der `@Step(...)`-Signatur im Code. Gut für
+datengetriebene Szenarien (mehrere Eingaben ohne Step-Wiederholung).
+
+**Befehl (lokal testen, dann committen/pushen):**
+```
+gauge run --scenario "Add multiple todo items" specs/todo.spec
+git add specs/todo.spec tests/StepImplementation.ts
+git commit -m "Add table-driven scenario for multiple todos"
+git push
+```
+
+**Danach:** Im Browser `.../actions` öffnen und beobachten, wie der neue
+Lauf automatisch (Trigger-Spalte: "push", nicht "workflow_dispatch") startet
+— das ist der eigentliche Beweis für den Push-getriggerten CI-Flow.
+
+**Status:** ⏳ ausstehend — bitte lokales Testergebnis mitteilen
+
+---
+
+## Schritt 16: Volle Gauge-Stärke — ein Spec pro Test, im "Testmanager-Stil"
+
+**Idee:** Statt einer kombinierten `todo.spec` jetzt EIN Spec-File pro
+fachlichem Test, jeweils mit Tabellen für die Testdaten — genau die
+Struktur, in der ein Test Manager (nicht-technisch) Specs schreiben würde,
+während der Automatisierer (du) nur die Step-Implementierung liefert.
+
+**Neue Struktur:**
+```
+specs/
+  add_todo.spec        → "Add Todo Items"
+  complete_todo.spec   → "Complete Todo Items"
+  delete_todo.spec     → "Delete Todo Items"
+```
+(altes kombiniertes `specs/todo.spec` entfernt)
+
+**`specs/add_todo.spec`:**
+```markdown
+# Add Todo Items
+
+## Add todo items and verify they appear
+* Open the todo app
+* Add todos
+
+   |description     |
+   |-----------------|
+   |Buy milk         |
+   |Walk the dog     |
+   |Clean the house  |
+
+* Todos should be visible
+
+   |description     |
+   |-----------------|
+   |Buy milk         |
+   |Walk the dog     |
+   |Clean the house  |
+```
+
+**`specs/complete_todo.spec`:**
+```markdown
+# Complete Todo Items
+
+## Complete selected todo items
+* Open the todo app
+* Add todos
+
+   |description     |
+   |-----------------|
+   |Buy milk         |
+   |Walk the dog     |
+   |Clean the house  |
+
+* Complete todos
+
+   |description     |
+   |-----------------|
+   |Buy milk         |
+   |Clean the house  |
+
+* Todos should be marked as completed
+
+   |description     |
+   |-----------------|
+   |Buy milk         |
+   |Clean the house  |
+
+* Todos should not be marked as completed
+
+   |description     |
+   |-----------------|
+   |Walk the dog     |
+```
+
+**`specs/delete_todo.spec`:**
+```markdown
+# Delete Todo Items
+
+## Delete selected todo items
+* Open the todo app
+* Add todos
+
+   |description     |
+   |-----------------|
+   |Buy milk         |
+   |Walk the dog     |
+
+* Delete todos
+
+   |description     |
+   |-----------------|
+   |Buy milk         |
+
+* Todos should not be visible
+
+   |description     |
+   |-----------------|
+   |Buy milk         |
+
+* Todos should be visible
+
+   |description     |
+   |-----------------|
+   |Walk the dog     |
+```
+
+**Refaktorierte `tests/StepImplementation.ts`:** Private Helper-Methoden
+(`addSingleTodo`, `assertVisible`, `assertNotVisible`, `completeSingle`,
+`assertCompleted`, `assertNotCompleted`, `deleteSingle`, `todoItem`) sind
+die EINE Quelle der Wahrheit. Sowohl die alten Einzel-Steps (`<item>`) als
+auch die neuen Tabellen-Steps (`<table>`) rufen dieselben Helper auf —
+keine Logik-Duplikation zwischen "ein Item" und "mehrere Items aus einer
+Tabelle".
+
+**Talking Points:**
+- **Skalierbarkeit:** So wächst eine echte Testsuite — viele kleine,
+  fachlich benannte Spec-Dateien, alle auf einer gemeinsamen,
+  wiederverwendbaren Step-Bibliothek aufbauend.
+- **Arbeitsteilung:** Der Test Manager kann `.spec`-Dateien und Tabellen
+  direkt in Markdown pflegen/erweitern (neue Testdaten-Zeile = neuer
+  Testfall), ohne den TypeScript-Code anzufassen — solange die
+  Step-Texte zu vorhandenen Implementierungen passen.
+- **DRY-Prinzip:** Private Helper vermeiden, dass jede `<table>`-Variante
+  ihre eigene Kopie der Playwright-Logik hat.
+
+**Befehl (im Terminal ausführen, lokal validieren):**
+```
+gauge run specs
+```
+
+**Ergebnis:** Grün. Struktur bestätigt.
+
+**Status:** ✅ Ein Spec pro fachlichem Test, gemeinsame Step-Bibliothek
+
+---
+
+## Schritt 17: Datengetriebene Specs (Tabelle auf Spec-Ebene)
+
+**Anfrage:** Muster wie
+```
+# Search the internet
+|query    |
+|---------|
+|Cup Cakes|
+|Star wars|
+|Pies     |
+
+## Look for things
+* Search Google for <query>
+```
+
+**Wichtiger Unterschied zu Schritt 16:** Das ist eine ANDERE Gauge-Funktion
+als die Inline-Step-Tabelle (`* Add todos` + `<table>`-Parameter):
+
+| Muster | Wo die Tabelle steht | Was passiert |
+|---|---|---|
+| **Inline-Step-Tabelle** (Schritt 16) | Direkt unter einem `*`-Step | EIN Step-Aufruf bekommt die GANZE Tabelle als `Table`-Objekt; Schleife über Zeilen im Code |
+| **Datengetriebene Spec** (dieser Schritt) | Direkt unter der `#`/`##`-Überschrift | Gauge wiederholt das GANZE Szenario automatisch einmal PRO ZEILE, ersetzt `<spalte>` in JEDEM Step — kein `Table`-Objekt, Steps bleiben einfache Einzelwert-Funktionen |
+
+**Recherche vor der Umsetzung:** Live gegen DuckDuckGo getestet
+(`https://duckduckgo.com/html/?q=...`) — Ergebnis: HTTP 202, Seite zeigt
+sofort eine CAPTCHA-Challenge ("Select all squares containing a duck").
+Bot-Erkennung, kein Playwright-Problem. Google verhält sich ähnlich oder
+aggressiver. Diese CAPTCHA zu umgehen wurde bewusst NICHT versucht.
+
+**Talking Point:** Reale Drittanbieter-Suchmaschinen sind für automatisierte
+Tests grundsätzlich ungeeignet (Bot-Erkennung, CAPTCHAs, ToS, instabiles
+UI) — in echten Projekten mockt/stubt man solche externen Abhängigkeiten
+oder testet gegen eine eigene, kontrollierte Umgebung.
+
+**Umgesetzt stattdessen mit der bewährten TodoMVC-Demo — identisches
+Gauge-Feature, zuverlässiges Ziel (`specs/add_todo_data_driven.spec`):**
+```markdown
+# Add several todo items (data-driven)
+
+|description     |
+|-----------------|
+|Buy milk         |
+|Walk the dog     |
+|Clean the house  |
+
+## Add a todo item and verify it appears
+* Open the todo app
+* Add todo <description>
+* Todo <description> should be visible
+```
+**Kein neuer Code nötig** — nutzt die längst vorhandenen Steps `Add todo
+<item>` und `Todo <item> should be visible` direkt weiter. Gauge führt
+dieses eine Szenario automatisch 3× aus (einmal pro Tabellenzeile).
+
+**Befehl (im Terminal ausführen):**
+```
+gauge run specs/add_todo_data_driven.spec
+```
+
+**Ergebnis:** Grün, beide Läufe (`gauge run specs` und gezielt die
+data-driven Spec). Nutzer-Fazit: Bei datengetriebenen Tabellen-Specs
+bleiben, weil so auch Nicht-Programmierer die Tests in Gauge schreiben
+und verstehen können — die eigentliche Ausführung passiert eine Ebene
+tiefer in Playwright. Genau Gauges Kernversprechen.
+
+**Status:** ✅ Alle drei Specs + data-driven Variante laufen grün
+
+**Befehl (im Terminal ausführen, alles zusammen committen/pushen):**
+```
+git add specs tests/StepImplementation.ts
+git status
+git commit -m "Split specs per feature, add table-driven and data-driven examples"
+git push
+```
+
+---
+
+## Schritt 18: Komplett auf datengetriebene Specs umgestellt
+
+**Entscheidung:** Inline-Step-Tabellen-Variante (Schritt 16) wieder verworfen
+zugunsten von durchgängig datengetriebenen Specs (Schritt 17) — pro Zeile
+ein vollständig unabhängiger Testfall (jedes Szenario startet ohnehin mit
+frischer `Page`). Begründung des Nutzers: Nicht-Programmierer können
+Tabellen auf Spec-Ebene direkt lesen/erweitern; die Ausführung passiert
+unsichtbar eine Ebene tiefer in Playwright.
+
+**Alte Dateien gelöscht:** `add_todo.spec`, `complete_todo.spec`,
+`delete_todo.spec` (Inline-Tabellen-Version) sowie das Prototyp-File
+`add_todo_data_driven.spec` (jetzt in `add_todo.spec` aufgegangen).
+
+**`specs/add_todo.spec`:**
+```markdown
+# Add Todo Items
+
+|description     |
+|-----------------|
+|Buy milk         |
+|Walk the dog     |
+|Clean the house  |
+
+## Add a todo item and verify it appears
+* Open the todo app
+* Add todo <description>
+* Todo <description> should be visible
+```
+
+**`specs/complete_todo.spec`** (zwei Spalten — zweite Spalte steuert eine
+Bedingung im Step-Code):
+```markdown
+# Complete Todo Items
+
+|description     |shouldComplete|
+|-----------------|--------------|
+|Buy milk         |true          |
+|Walk the dog     |false         |
+
+## Add a todo item and set its completion state
+* Open the todo app
+* Add todo <description>
+* Set completed state of <description> to <shouldComplete>
+* Completion state of <description> should be <shouldComplete>
+```
+
+**`specs/delete_todo.spec`:**
+```markdown
+# Delete Todo Items
+
+|description     |
+|-----------------|
+|Buy milk         |
+|Walk the dog     |
+
+## Add and delete a todo item
+* Open the todo app
+* Add todo <description>
+* Delete todo <description>
+* Todo <description> should not be visible
+```
+
+**Neue/geänderte Steps in `tests/StepImplementation.ts`:**
+```typescript
+private toBoolean(value: unknown): boolean {
+    if (typeof value === "boolean") return value;
+    if (value === "true") return true;
+    if (value === "false") return false;
+    throw new Error(`Expected "true" or "false", got: ${JSON.stringify(value)}`);
+}
+
+@Step("Set completed state of <item> to <state>")
+public async setCompletedState(item: string, state: unknown) {
+    if (this.toBoolean(state)) {
+        await this.todoItem(item).getByRole("checkbox").check();
+    }
+}
+
+@Step("Completion state of <item> should be <state>")
+public async completionStateShouldBe(item: string, state: unknown) {
+    if (this.toBoolean(state)) {
+        await this.assertCompleted(item);
+    } else {
+        await this.assertNotCompleted(item);
+    }
+}
+```
+
+**Talking Points:**
+- **`shouldComplete`-Spalte kommt als echter `boolean` an, nicht als String**
+  — gauge-ts' `PrimitiveParser` konvertiert `"true"`/`"false"` automatisch
+  (gleicher Mechanismus wie bei den Zahlen in Schritt 6/Bonus). `toBoolean()`
+  validiert trotzdem explizit statt blind zu vertrauen — konsistent mit der
+  robusten-Wait-Lektion.
+- **Ein Test Manager könnte jetzt eine neue Zeile** (`|Buy bread|true|`) in
+  `complete_todo.spec` ergänzen und hätte sofort einen neuen, vollständigen
+  Testfall — ohne eine Zeile Code anzufassen.
+- **Aufgeräumter Code:** Alle nicht mehr referenzierten Inline-Tabellen-Steps
+  (`Add todos <table>`, `Complete todos <table>`, `Delete todos <table>`,
+  `Todos should (not) be visible/completed <table>`) entfernt — toter Code
+  vermieden.
+
+**Befehl (im Terminal ausführen):**
+```
+gauge run specs
+```
+
+**Status:** ⏳ ausstehend — bitte Ergebnis mitteilen
+
+---
+
+# Teil 7: Live-Coding-Übung (Simulation einer echten Interview-Aufgabe)
+
+**Gestellte Aufgabe:** Neues Szenario "Todo-Eintrag löschen" ergänzen.
+Das Lösch-Icon (×) erscheint auf der TodoMVC-Demo erst beim Hover über den
+Eintrag.
+
+**Eigene Recherche bestätigt (DOM-Inspektion via kleinem Node-Skript mit der
+schon installierten Playwright-Lib):**
+```html
+<button aria-label="Delete" class="destroy"></button>
+```
+→ Locator: `getByRole("button", { name: "Delete" })` (matcht über
+`aria-label`, das ist der "accessible name").
+
+**Wichtiger Fund:** Der Button ist standardmäßig `display: none` (klassisches
+TodoMVC-CSS), nicht nur `opacity: 0`. Playwrights `isVisible()`-Check
+berücksichtigt `display`/Bounding-Box, aber NICHT `opacity`. Test bestätigt:
+```
+Visible BEFORE hover: false
+Visible AFTER hover:  true
+```
+→ Der explizite `.hover()`-Step ist hier funktional notwendig, nicht nur
+Show-Effekt — ohne Hover würde `.click()` auf den Button einen Timeout
+werfen ("element is not visible"). Guter Talking Point: Playwrights
+Actionability-Checks (visible, stable, enabled, receives events) sind genau
+deshalb so wertvoll, weil sie solche UI-Fallstricke automatisch abfangen,
+statt stumpf zu klicken.
+
+**Erweiterte Spec (`specs/todo.spec`, neues Szenario):**
+```markdown
+## Delete a todo item
+* Open the todo app
+* Add todo "Buy milk"
+* Hover over todo "Buy milk"
+* Delete todo "Buy milk"
+* Todo "Buy milk" should not be visible
+```
+
+**Erweiterte Step-Implementierung (`tests/StepImplementation.ts`):**
+```typescript
+    @Step("Hover over todo <item>")
+    public async hoverOverTodo(item: string) {
+        const todoItem = this.page.getByTestId("todo-item").filter({ hasText: item });
+        await todoItem.hover();
+    }
+
+    @Step("Delete todo <item>")
+    public async deleteTodo(item: string) {
+        const todoItem = this.page.getByTestId("todo-item").filter({ hasText: item });
+        await todoItem.getByRole("button", { name: "Delete" }).click();
+    }
+
+    @Step("Todo <item> should not be visible")
+    public async todoShouldNotBeVisible(item: string) {
+        const todo = this.page.getByTestId("todo-title").filter({ hasText: item });
+        await todo.waitFor({ state: "hidden" });
+        assert.ok(!(await todo.isVisible()));
+    }
+```
+
+**Ergebnis:** Nutzer hat die Korrekturen (fehlender `Add todo`-Step, Tippfehler
+"By Milk"/"Buy Milk") selbst umgesetzt.
+
+**Bonus: npm-Scripts in `package.json` ergänzt** (bequemer Aufruf im Interview):
+```json
+"scripts": {
+  "test": "gauge run specs",
+  "docker:build": "docker build -t gauge-playwright-demo .",
+  "docker:test": "docker run --rm gauge-playwright-demo"
+}
+```
+→ Ab jetzt reicht `npm test` statt `gauge run specs` zu tippen — wirkt im
+Interview routinierter und ist Standard in JS/TS-Projekten.
+
+**Status:** ✅ Übung abgeschlossen — bereit für finalen Testlauf
+
+---
+
+## Bonus: VS Code Auto-Save fürs Live-Pairing
+
+**Datei:** `.vscode/settings.json`
+```json
+{
+  "files.autoSave": "onFocusChange"
+}
+```
+
+**Warum:** Speichert automatisch, sobald der Editor den Fokus verliert
+(z.B. Klick ins Terminal) — genau der Workflow im Interview: Code schreiben
+→ ins Terminal wechseln → `npm test` ausführen, ohne vorher manuell
+`Strg+S` zu drücken. Falls die Einstellung nicht sofort greift: VS-Code-
+Fenster einmal neu laden.
+
+**Status:** ⏳ ausstehend — bitte final `npm test` ausführen
+
+---
+
+## Bonus: Einzelnes Szenario gezielt ausführen
+
+**Nach Zeilennummer** (Zeile der `##`-Überschrift):
+```
+gauge run specs/todo.spec:18
+```
+
+**Nach Szenario-Name** (Flag `--scenario`, oft praktischer im Interview,
+weil Zeilennummern sich beim Editieren verschieben):
+```
+gauge run --scenario "Delete new todo item" specs/todo.spec
+```
+
+**Weitere nützliche Flags aus `gauge run --help`:**
+| Flag | Zweck |
+|---|---|
+| `-t, --tags "tagname"` | Nur Szenarien mit bestimmtem Tag ausführen |
+| `-f, --failed` | Nur die beim letzten Lauf fehlgeschlagenen Szenarien wiederholen |
+| `-v, --verbose` | Step-Level-Reporting statt nur Szenario-Level (gut zum Debuggen live) |
+| `-p, --parallel` | Parallele Ausführung |
+
+**Status:** ✅
+
+---
+
+## Bonus: Warum `seconds: number` trotz String-Parameter funktioniert
+
+Nachlauf-Frage aus der Praxis: `* Wait for "1" seconds` → Methode
+`waitForSeconds(seconds: number)` — warum meldet TypeScript hier keinen
+Typfehler, obwohl Gauge-Parameter eigentlich Strings aus der Spec-Datei sind?
+
+**Antwort (verifiziert im gauge-ts-Quellcode, `node_modules/gauge-ts/dist/processors/params/`):**
+`gauge-ts` besitzt eine `ParameterParsingChain` → `PrimitiveParser`, die JEDEN
+rohen String-Parameter aus der Spec automatisch versucht in `number`/`boolean`
+zu konvertieren (`Number(value)`, Finite-Check), BEVOR deine `@Step`-Methode
+aufgerufen wird. Bei `"1"` wird daraus eine echte JS-`number` `1` — kein
+Zufall durch `*`-Coercion, sondern aktive Konvertierung durch das Framework.
+
+**Die eigentliche Typsicherheits-Lücke:** Der Methodenaufruf läuft über
+generischen, zur Compile-Zeit ungetypten Dispatch (`executeMethod(instance,
+method, params)`). TypeScript prüft Typen nur an Stellen, die es selbst zur
+Compile-Zeit sieht — nicht bei Framework-seitigem Reflection-Aufruf. Würde
+die Spec `* Wait for "abc" seconds` lauten, würde `Number("abc")` zu `NaN`
+führen, der Primitive-Parser gäbe den rohen String `"abc"` zurück, und
+`seconds` wäre zur Laufzeit ein String — trotz `number`-Annotation. Das kann
+TypeScript nie verhindern, weil die `.spec`-Datei außerhalb seines
+Sichtfelds liegt.
+
+**Talking Point (gilt genauso für Cucumber & Co.):** Typsicherheit endet an
+der Grenze zwischen typisiertem Step-Code und der untypisierten,
+text-basierten Spezifikation — Laufzeit-Parsing/Validierung im Framework
+ersetzt dort, was der Compiler nicht leisten kann.
+
+---
+
+## Bonus: Der "abc"-Test — ein stiller Fehler statt eines Crashs
+
+**Live ausprobiert:** `* Wait for "abc" seconds` (dreimal im Szenario platziert)
+lief GRÜN durch (`P P P P P P P P P`, 3.701s total), obwohl `"abc"` keine
+gültige Zahl ist. Wurde die vorhin beschriebene Typsicherheits-Lücke also
+widerlegt? Nein — sie zeigt sich nur ANDERS als erwartet: nicht als Fehler,
+sondern als lautlos falsches Verhalten.
+
+**Nachvollzogen mit einem Mini-Node-Test:**
+```javascript
+const seconds = "abc";
+console.log(seconds * 1000);       // NaN
+setTimeout(() => console.log("resolved"), seconds * 1000);
+// → resolved nach ~11ms, KEIN Fehler
+```
+
+**Kausalkette:**
+1. `Number("abc")` → `NaN`, nicht finite → Gauges `PrimitiveParser` gibt den
+   rohen String `"abc"` zurück (keine Konvertierung).
+2. Methode bekommt `seconds = "abc"` (String, trotz `number`-Signatur).
+3. `"abc" * 1000` → `NaN`.
+4. `page.waitForTimeout(NaN)` → intern `setTimeout(fn, NaN)` → Node klemmt
+   ungültige Delays auf ~1ms — **kein Fehler, aber auch keine echte Wartezeit**.
+
+**Warum das der gefährlichere Fall ist:** Ein Crash wäre sofort sichtbar
+gewesen. Hier zeigt Gauge `P P P P P P P P P` — scheinbar alles korrekt —
+obwohl drei der neun Steps de facto nichts bewirkt haben. Das ist ein
+Paradebeispiel für "grüner Test ≠ Test prüft/tut das Richtige".
+
+**Talking Point fürs Interview:** Genau deshalb rät Playwright grundsätzlich
+von expliziten `waitForTimeout`-Wartezeiten zur Synchronisation ab (siehe
+Schritt 6, "Auto-Waiting") — sie können bei ungültigen/unerwarteten Werten
+lautlos ins Leere laufen, statt einen Fehler zu erzwingen. Ein `waitFor({
+state: ... })` auf einem echten Locator hätte bei einem kaputten Zustand
+wenigstens einen ehrlichen Timeout-Fehler geworfen.
+
+---
+
+## Bonus: Robustes Wait — den stillen Fehler laut machen
+
+**Fix in `tests/StepImplementation.ts`:**
+```typescript
+@Step("Wait for <seconds> seconds")
+public async waitForSeconds(seconds: unknown) {
+    const value = typeof seconds === "number" ? seconds : Number(seconds);
+    if (!Number.isFinite(value) || value < 0) {
+        throw new Error(`"Wait for <seconds> seconds" expects a non-negative number, got: ${JSON.stringify(seconds)}`);
+    }
+    await this.page.waitForTimeout(value * 1000);
+}
+```
+
+**Was sich ändert:**
+| Vorher | Nachher |
+|---|---|
+| `seconds: number` — Lüge zur Laufzeit, Gauge garantiert das nicht | `seconds: unknown` — ehrlich zur tatsächlichen Unsicherheit |
+| `seconds * 1000` direkt, kein Check | Erst prüfen: ist es (nach Konvertierung) eine endliche, nicht-negative Zahl? |
+| Bei `"abc"` → `NaN` → `setTimeout` lautlos ~0ms | Bei `"abc"` → expliziter, sprechender `Error` — Test schlägt sichtbar fehl |
+
+**Talking Point:** Das ist das allgemeine Muster gegen die Typsicherheits-
+Lücke an der Spec↔Code-Grenze: Werte aus der Spec-Datei so behandeln, als
+kämen sie von einer nicht vertrauenswürdigen externen Quelle (Validierung
+an der Grenze), statt der TS-Signatur blind zu vertrauen.
+
+---
+
+## Bonus: Headed-Modus für die Live-Demo umschaltbar machen
+
+`headless: true` war hart im Code verdrahtet. Für eine visuelle Demo im
+Interview (Browser sichtbar statt unsichtbar) jetzt per Umgebungsvariable
+steuerbar, ohne Code zu ändern:
+
+**`tests/StepImplementation.ts`, Zeile in `beforeSuite()`:**
+```typescript
+this.browser = await chromium.launch({ headless: process.env.HEADLESS !== "false" });
+```
+
+**Aufruf (PowerShell-Syntax!):**
+```powershell
+$env:HEADLESS="false"; gauge run --scenario "Delete new todo item" specs/todo.spec
+```
+Ohne gesetzte Variable (Standardfall, z.B. in Docker/CI) bleibt es headless.
+
+**Merksatz:** PowerShell setzt Umgebungsvariablen anders als bash
+(`$env:VAR="wert"` statt `VAR=wert`) — im Interview evtl. relevant, falls
+im geteilten Terminal nach der Syntax gefragt wird.
+
+**Status:** ✅

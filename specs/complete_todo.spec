@@ -1,31 +1,12 @@
 # Complete Todo Items
 
-## Complete selected todo items
+|description     |shouldComplete|
+|-----------------|--------------|
+|Buy milk         |true          |
+|Walk the dog     |false         |
+
+## Add a todo item and set its completion state
 * Open the todo app
-* Add todos
-
-   |description     |
-   |-----------------|
-   |Buy milk         |
-   |Walk the dog     |
-   |Clean the house  |
-
-* Complete todos
-
-   |description     |
-   |-----------------|
-   |Buy milk         |
-   |Clean the house  |
-
-* Todos should be marked as completed
-
-   |description     |
-   |-----------------|
-   |Buy milk         |
-   |Clean the house  |
-
-* Todos should not be marked as completed
-
-   |description     |
-   |-----------------|
-   |Walk the dog     |
+* Add todo <description>
+* Set completed state of <description> to <shouldComplete>
+* Completion state of <description> should be <shouldComplete>

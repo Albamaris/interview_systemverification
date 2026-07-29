@@ -50,36 +50,134 @@ Datei umbenennen (`Rename-Item ... gauge.placeholder.bak`).
 
 ---
 
-## 2. Finale Spec (`specs/todo.spec`)
+## 2. Finale Spec-Struktur — ein File pro fachlichem Test
 
-```markdown
-## Add a new todo item
-* Open the todo app
-* Add todo "Buy Milk"
-* Todo "Buy Milk" should be visible
-
-## Complete a todo item
-* Open the todo app
-* Add todo "Clean the house"
-* Mark todo "Clean the house" as done
-* Todo "Clean the house" should be marked as completed
-
-## Delete a todo item
-* Open the todo app
-* Add todo "Buy Milk"
-* Hover over todo "Buy Milk"
-* Delete todo "Buy Milk"
-* Todo "Buy Milk" should not be visible
+```
+specs/
+  add_todo.spec              → "Add Todo Items" (Tabellen-Step)
+  add_todo_data_driven.spec  → datengetriebene Variante (Tabelle auf Spec-Ebene)
+  complete_todo.spec         → "Complete Todo Items"
+  delete_todo.spec           → "Delete Todo Items"
 ```
 Zielseite: `https://demo.playwright.dev/todomvc` (offizielle Playwright-Demo).
+
+**`specs/add_todo.spec`:**
+```markdown
+# Add Todo Items
+
+## Add todo items and verify they appear
+* Open the todo app
+* Add todos
+
+   |description     |
+   |-----------------|
+   |Buy milk         |
+   |Walk the dog     |
+   |Clean the house  |
+
+* Todos should be visible
+
+   |description     |
+   |-----------------|
+   |Buy milk         |
+   |Walk the dog     |
+   |Clean the house  |
+```
+
+**`specs/complete_todo.spec`:**
+```markdown
+# Complete Todo Items
+
+## Complete selected todo items
+* Open the todo app
+* Add todos
+
+   |description     |
+   |-----------------|
+   |Buy milk         |
+   |Walk the dog     |
+   |Clean the house  |
+
+* Complete todos
+
+   |description     |
+   |-----------------|
+   |Buy milk         |
+   |Clean the house  |
+
+* Todos should be marked as completed
+
+   |description     |
+   |-----------------|
+   |Buy milk         |
+   |Clean the house  |
+
+* Todos should not be marked as completed
+
+   |description     |
+   |-----------------|
+   |Walk the dog     |
+```
+
+**`specs/delete_todo.spec`:**
+```markdown
+# Delete Todo Items
+
+## Delete selected todo items
+* Open the todo app
+* Add todos
+
+   |description     |
+   |-----------------|
+   |Buy milk         |
+   |Walk the dog     |
+
+* Delete todos
+
+   |description     |
+   |-----------------|
+   |Buy milk         |
+
+* Todos should not be visible
+
+   |description     |
+   |-----------------|
+   |Buy milk         |
+
+* Todos should be visible
+
+   |description     |
+   |-----------------|
+   |Walk the dog     |
+```
+
+**`specs/add_todo_data_driven.spec`** (Tabelle auf Spec-Ebene, siehe Abschnitt 4):
+```markdown
+# Add several todo items (data-driven)
+
+|description     |
+|-----------------|
+|Buy milk         |
+|Walk the dog     |
+|Clean the house  |
+
+## Add a todo item and verify it appears
+* Open the todo app
+* Add todo <description>
+* Todo <description> should be visible
+```
 
 ---
 
 ## 3. Finale Step-Implementierung (`tests/StepImplementation.ts`)
 
+Private Helper-Methoden sind die EINE Quelle der Wahrheit; sowohl
+Einzel-Steps (`<item>`) als auch Tabellen-Steps (`<table>`) rufen dieselben
+Helper auf — keine Logik-Duplikation.
+
 ```typescript
-import { Step, BeforeSuite, AfterSuite, BeforeScenario, AfterScenario } from "gauge-ts";
-import { chromium, Browser, Page } from "playwright";
+import { Step, BeforeSuite, AfterSuite, BeforeScenario, AfterScenario, Table } from "gauge-ts";
+import { chromium, Browser, Page, Locator } from "playwright";
 import assert = require("assert");
 
 export default class StepImplementation {
@@ -106,6 +204,52 @@ export default class StepImplementation {
         await this.page.close();
     }
 
+    // ---- private helpers: single source of truth for both <item> and <table> steps ----
+
+    private todoItem(item: string): Locator {
+        return this.page.getByTestId("todo-item").filter({ hasText: item });
+    }
+
+    private async addSingleTodo(item: string) {
+        const input = this.page.getByPlaceholder("What needs to be done?");
+        await input.fill(item);
+        await input.press("Enter");
+    }
+
+    private async assertVisible(item: string) {
+        const todo = this.page.getByTestId("todo-title").filter({ hasText: item });
+        await todo.waitFor({ state: "visible" });
+        assert.ok(await todo.isVisible());
+    }
+
+    private async assertNotVisible(item: string) {
+        const todo = this.page.getByTestId("todo-title").filter({ hasText: item });
+        await todo.waitFor({ state: "hidden" });
+        assert.ok(!(await todo.isVisible()));
+    }
+
+    private async completeSingle(item: string) {
+        await this.todoItem(item).getByRole("checkbox").check();
+    }
+
+    private async assertCompleted(item: string) {
+        const classAttr = await this.todoItem(item).getAttribute("class");
+        assert.ok(classAttr?.includes("completed"));
+    }
+
+    private async assertNotCompleted(item: string) {
+        const classAttr = await this.todoItem(item).getAttribute("class");
+        assert.ok(!classAttr?.includes("completed"));
+    }
+
+    private async deleteSingle(item: string) {
+        const todo = this.todoItem(item);
+        await todo.hover();
+        await todo.getByRole("button", { name: "Delete" }).click();
+    }
+
+    // ---- steps ----
+
     @Step("Open the todo app")
     public async openTodoApp() {
         await this.page.goto("https://demo.playwright.dev/todomvc");
@@ -113,55 +257,105 @@ export default class StepImplementation {
 
     @Step("Add todo <item>")
     public async addTodo(item: string) {
-        const input = this.page.getByPlaceholder("What needs to be done?");
-        await input.fill(item);
-        await input.press("Enter");
+        await this.addSingleTodo(item);
+    }
+
+    @Step("Add todos <table>")
+    public async addTodos(table: Table) {
+        for (const row of table.getTableRows()) {
+            await this.addSingleTodo(row.getCell("description"));
+        }
     }
 
     @Step("Todo <item> should be visible")
     public async todoShouldBeVisible(item: string) {
-        const todo = this.page.getByTestId("todo-title").filter({ hasText: item });
-        await todo.waitFor({ state: "visible" });
-        assert.ok(await todo.isVisible());
+        await this.assertVisible(item);
     }
 
-    @Step("Mark todo <item> as done")
-    public async markTodoAsDone(item: string) {
-        const todoItem = this.page.getByTestId("todo-item").filter({ hasText: item });
-        await todoItem.getByRole("checkbox").check();
-    }
-
-    @Step("Todo <item> should be marked as completed")
-    public async todoShouldBeCompleted(item: string) {
-        const todoItem = this.page.getByTestId("todo-item").filter({ hasText: item });
-        const classAttr = await todoItem.getAttribute("class");
-        assert.ok(classAttr?.includes("completed"));
-    }
-
-    @Step("Hover over todo <item>")
-    public async hoverOverTodo(item: string) {
-        const todoItem = this.page.getByTestId("todo-item").filter({ hasText: item });
-        await todoItem.hover();
-    }
-
-    @Step("Delete todo <item>")
-    public async deleteTodo(item: string) {
-        const todoItem = this.page.getByTestId("todo-item").filter({ hasText: item });
-        await todoItem.getByRole("button", { name: "Delete" }).click();
+    @Step("Todos should be visible <table>")
+    public async todosShouldBeVisible(table: Table) {
+        for (const row of table.getTableRows()) {
+            await this.assertVisible(row.getCell("description"));
+        }
     }
 
     @Step("Todo <item> should not be visible")
     public async todoShouldNotBeVisible(item: string) {
-        const todo = this.page.getByTestId("todo-title").filter({ hasText: item });
-        await todo.waitFor({ state: "hidden" });
-        assert.ok(!(await todo.isVisible()));
+        await this.assertNotVisible(item);
+    }
+
+    @Step("Todos should not be visible <table>")
+    public async todosShouldNotBeVisible(table: Table) {
+        for (const row of table.getTableRows()) {
+            await this.assertNotVisible(row.getCell("description"));
+        }
+    }
+
+    @Step("Mark todo <item> as done")
+    public async markTodoAsDone(item: string) {
+        await this.completeSingle(item);
+    }
+
+    @Step("Complete todos <table>")
+    public async completeTodos(table: Table) {
+        for (const row of table.getTableRows()) {
+            await this.completeSingle(row.getCell("description"));
+        }
+    }
+
+    @Step("Todo <item> should be marked as completed")
+    public async todoShouldBeCompleted(item: string) {
+        await this.assertCompleted(item);
+    }
+
+    @Step("Todos should be marked as completed <table>")
+    public async todosShouldBeCompleted(table: Table) {
+        for (const row of table.getTableRows()) {
+            await this.assertCompleted(row.getCell("description"));
+        }
+    }
+
+    @Step("Todos should not be marked as completed <table>")
+    public async todosShouldNotBeCompleted(table: Table) {
+        for (const row of table.getTableRows()) {
+            await this.assertNotCompleted(row.getCell("description"));
+        }
+    }
+
+    @Step("Delete todo <item>")
+    public async deleteTodo(item: string) {
+        await this.deleteSingle(item);
+    }
+
+    @Step("Delete todos <table>")
+    public async deleteTodos(table: Table) {
+        for (const row of table.getTableRows()) {
+            await this.deleteSingle(row.getCell("description"));
+        }
     }
 }
 ```
 
 ---
 
-## 4. Dockerfile
+## 4. Zwei Tabellen-Muster in Gauge — nicht verwechseln
+
+| Muster | Wo die Tabelle steht | Was passiert |
+|---|---|---|
+| **Inline-Step-Tabelle** | Direkt unter einem `*`-Step (z.B. `* Add todos`) | EIN Step-Aufruf bekommt die GANZE Tabelle als `Table`-Objekt; Schleife über Zeilen im Code (`table.getTableRows()`) |
+| **Datengetriebene Spec** | Direkt unter der `#`/`##`-Überschrift, VOR jedem Szenario | Gauge wiederholt das GANZE Szenario automatisch einmal PRO ZEILE, ersetzt `<spalte>` in jedem Step — kein `Table`-Objekt im Code nötig, Steps bleiben einfache Einzelwert-Funktionen |
+
+**Wichtiger Talking Point:** Reale Drittanbieter-Suchmaschinen (Google,
+DuckDuckGo) live in automatisierten Tests anzusteuern ist KEIN gutes
+Beispiel für datengetriebene Specs — beide zeigen CAPTCHA-Challenges bei
+Bot-Traffic (live getestet: DuckDuckGo antwortet mit "Select all squares
+containing a duck"). Für echte Projekte: externe Abhängigkeiten mocken
+oder gegen eine eigene, kontrollierte Umgebung testen — nicht gegen fremde
+Live-Seiten.
+
+---
+
+## 5. Dockerfile
 
 ```dockerfile
 FROM mcr.microsoft.com/playwright:v1.62.0-noble
@@ -178,7 +372,7 @@ auseinanderdriften).
 
 ---
 
-## 5. GitHub Actions (`.github/workflows/ci.yml`)
+## 6. GitHub Actions (`.github/workflows/ci.yml`)
 
 ```yaml
 name: Gauge Playwright Tests
@@ -200,17 +394,19 @@ jobs:
         with: { name: gauge-html-report, path: reports/html-report }
 ```
 Branch im Trigger muss zum tatsächlichen Default-Branch des Repos passen
-(`main` vs. `master` — leicht zu übersehen).
+(`main` vs. `master` — leicht zu übersehen). `schedule` läuft unabhängig
+von Pushes (nightly regression); `workflow_dispatch` erlaubt manuelles
+Auslösen über den "Run workflow"-Button im Actions-Tab.
 
 ---
 
-## 6. Nützliche Befehle (Cheat-Referenz)
+## 7. Nützliche Befehle (Cheat-Referenz)
 
 | Befehl | Zweck |
 |---|---|
 | `gauge run specs` | Alle Specs ausführen |
-| `gauge run specs/todo.spec:18` | Ein Szenario nach Zeilennummer |
-| `gauge run --scenario "Name" specs/todo.spec` | Ein Szenario nach Name |
+| `gauge run specs/delete_todo.spec:5` | Ein Szenario nach Zeilennummer |
+| `gauge run --scenario "Name" specs/delete_todo.spec` | Ein Szenario nach Name |
 | `gauge run -t "tagname" specs` | Nach Tag filtern |
 | `gauge run -f` | Nur zuletzt fehlgeschlagene Szenarien |
 | `gauge run -v` | Verbose (Step-Level statt Szenario-Level) |
@@ -219,10 +415,13 @@ Branch im Trigger muss zum tatsächlichen Default-Branch des Repos passen
 
 ---
 
-## 7. Kernkonzepte — Talking Points
+## 8. Kernkonzepte — Talking Points
 
 - **Gauge trennt WAS von WIE:** Spec (Markdown, lesbar für Nicht-Techniker)
   vs. Step-Implementierung (Code). Guter Anknüpfungspunkt für Sales-Sicht.
+- **Ein Spec pro fachlichem Test, gemeinsame Step-Bibliothek:** So wächst
+  eine echte Testsuite — Test Manager pflegt `.spec` + Tabellen, ohne den
+  TypeScript-Code anzufassen.
 - **Playwright ist hier nur Library, nicht Runner:** `playwright` (nicht
   `@playwright/test`) wird innerhalb der Gauge-Steps aufgerufen — wie
   Selenium/Playwright als Library in JUnit-Steps.
@@ -241,12 +440,17 @@ Branch im Trigger muss zum tatsächlichen Default-Branch des Repos passen
   aber bei ungültigen Werten (`"abc"`) entstehen **stille** Fehler
   (`NaN` → `setTimeout(NaN)` läuft ~sofort durch, ohne Crash) statt eines
   Fehlers — deshalb: Parameter an der Grenze explizit validieren.
+- **Zwei Tabellen-Muster nicht verwechseln:** Inline-Step-Tabelle (`Table`
+  im Code) vs. datengetriebene Spec (Szenario-Wiederholung pro Zeile,
+  siehe Abschnitt 4).
+- **Externe Live-Abhängigkeiten meiden:** Suchmaschinen/fremde Seiten in
+  Tests haben Bot-Erkennung/CAPTCHAs — mocken oder eigene Umgebung nutzen.
 - **Gauge generiert automatisch HTML-Reports** (`reports/html-report/`) —
   als CI-Artefakt archivierbar.
 
 ---
 
-## 8. Für die Sales-Frage ("Wie erklärst du einem Kunden den Nutzen?")
+## 9. Für die Sales-Frage ("Wie erklärst du einem Kunden den Nutzen?")
 
 - Gauge-Specs sind lesbares Markdown → auch Product Owner/Kunden können
   Testabdeckung nachvollziehen, ohne Code zu lesen.
@@ -257,7 +461,7 @@ Branch im Trigger muss zum tatsächlichen Default-Branch des Repos passen
 
 ---
 
-## 9. Eigene Referenzprojekte
+## 10. Eigene Referenzprojekte
 
 - `github.com/Albamaris/ecommerce-test-automation` — Page Object Pattern,
   GitHub Actions + Jenkins

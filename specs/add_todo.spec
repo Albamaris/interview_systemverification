@@ -1,19 +1,12 @@
 # Add Todo Items
 
-## Add todo items and verify they appear
+|description     |
+|-----------------|
+|Buy milk         |
+|Walk the dog     |
+|Clean the house  |
+
+## Add a todo item and verify it appears
 * Open the todo app
-* Add todos
-
-   |description     |
-   |-----------------|
-   |Buy milk         |
-   |Walk the dog     |
-   |Clean the house  |
-
-* Todos should be visible
-
-   |description     |
-   |-----------------|
-   |Buy milk         |
-   |Walk the dog     |
-   |Clean the house  |
+* Add todo <description>
+* Todo <description> should be visible

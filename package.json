@@ -1,6 +1,11 @@
 {
   "name": "gauge-ts-template",
   "description": "Starter template for writing TypeScript tests for Gauge",
+  "scripts": {
+    "test": "gauge run specs",
+    "docker:build": "docker build -t gauge-playwright-demo .",
+    "docker:test": "docker run --rm gauge-playwright-demo"
+  },
   "dependencies": {
     "gauge-ts": "0.5.1",
     "playwright": "^1.62.0",

@@ -1,4 +1,4 @@
-import { Step, BeforeSuite, AfterSuite, BeforeScenario, AfterScenario, Table } from "gauge-ts";
+import { Step, BeforeSuite, AfterSuite, BeforeScenario, AfterScenario } from "gauge-ts";
 import { chromium, Browser, Page, Locator } from "playwright";
 import assert = require("assert");
 
@@ -26,32 +26,8 @@ export default class StepImplementation {
         await this.page.close();
     }
 
-    // ---- private helpers: single source of truth for both <item> and <table> steps ----
-
     private todoItem(item: string): Locator {
         return this.page.getByTestId("todo-item").filter({ hasText: item });
-    }
-
-    private async addSingleTodo(item: string) {
-        const input = this.page.getByPlaceholder("What needs to be done?");
-        await input.fill(item);
-        await input.press("Enter");
-    }
-
-    private async assertVisible(item: string) {
-        const todo = this.page.getByTestId("todo-title").filter({ hasText: item });
-        await todo.waitFor({ state: "visible" });
-        assert.ok(await todo.isVisible());
-    }
-
-    private async assertNotVisible(item: string) {
-        const todo = this.page.getByTestId("todo-title").filter({ hasText: item });
-        await todo.waitFor({ state: "hidden" });
-        assert.ok(!(await todo.isVisible()));
-    }
-
-    private async completeSingle(item: string) {
-        await this.todoItem(item).getByRole("checkbox").check();
     }
 
     private async assertCompleted(item: string) {
@@ -64,21 +40,20 @@ export default class StepImplementation {
         assert.ok(!classAttr?.includes("completed"));
     }
 
-    private async deleteSingle(item: string) {
-        const todo = this.todoItem(item);
-        await todo.hover();
-        await todo.getByRole("button", { name: "Delete" }).click();
+    private toBoolean(value: unknown): boolean {
+        if (typeof value === "boolean") return value;
+        if (value === "true") return true;
+        if (value === "false") return false;
+        throw new Error(`Expected "true" or "false", got: ${JSON.stringify(value)}`);
     }
 
-    // ---- steps ----
-
-    @Step("Wait for <seconds> seconds") // This step will wait for the specified number of seconds, only for demonstration purposes. In real tests, you should avoid using fixed waits and instead wait for specific conditions.
+    @Step("Wait for <seconds> seconds") // demonstration purposes only — avoid fixed waits in real tests
     public async waitForSeconds(seconds: unknown) {
         const value = typeof seconds === "number" ? seconds : Number(seconds);
         if (!Number.isFinite(value) || value < 0) {
             throw new Error(`"Wait for <seconds> seconds" expects a non-negative number, got: ${JSON.stringify(seconds)}`);
         }
-        await this.page.waitForTimeout(value * 1000); // Convert seconds to milliseconds
+        await this.page.waitForTimeout(value * 1000);
     }
 
     @Step("Open the todo app")
@@ -86,87 +61,52 @@ export default class StepImplementation {
         await this.page.goto("https://demo.playwright.dev/todomvc");
     }
 
+    @Step("Add todo <item>")
+    public async addTodo(item: string) {
+        const input = this.page.getByPlaceholder("What needs to be done?");
+        await input.fill(item);
+        await input.press("Enter");
+    }
+
+    @Step("Todo <item> should be visible")
+    public async todoShouldBeVisible(item: string) {
+        const todo = this.page.getByTestId("todo-title").filter({ hasText: item });
+        await todo.waitFor({ state: "visible" });
+        assert.ok(await todo.isVisible());
+    }
+
+    @Step("Todo <item> should not be visible")
+    public async todoShouldNotBeVisible(item: string) {
+        const todo = this.page.getByTestId("todo-title").filter({ hasText: item });
+        await todo.waitFor({ state: "hidden" });
+        assert.ok(!(await todo.isVisible()));
+    }
+
+    @Step("Set completed state of <item> to <state>")
+    public async setCompletedState(item: string, state: unknown) {
+        if (this.toBoolean(state)) {
+            await this.todoItem(item).getByRole("checkbox").check();
+        }
+    }
+
+    @Step("Completion state of <item> should be <state>")
+    public async completionStateShouldBe(item: string, state: unknown) {
+        if (this.toBoolean(state)) {
+            await this.assertCompleted(item);
+        } else {
+            await this.assertNotCompleted(item);
+        }
+    }
+
     @Step("Hover over todo <item>")
     public async hoverOverTodo(item: string) {
         await this.todoItem(item).hover();
     }
 
-    @Step("Add todo <item>")
-    public async addTodo(item: string) {
-        await this.addSingleTodo(item);
-    }
-
-    @Step("Add todos <table>")
-    public async addTodos(table: Table) {
-        for (const row of table.getTableRows()) {
-            await this.addSingleTodo(row.getCell("description"));
-        }
-    }
-
-    @Step("Todo <item> should be visible")
-    public async todoShouldBeVisible(item: string) {
-        await this.assertVisible(item);
-    }
-
-    @Step("Todos should be visible <table>")
-    public async todosShouldBeVisible(table: Table) {
-        for (const row of table.getTableRows()) {
-            await this.assertVisible(row.getCell("description"));
-        }
-    }
-
-    @Step("Todo <item> should not be visible")
-    public async todoShouldNotBeVisible(item: string) {
-        await this.assertNotVisible(item);
-    }
-
-    @Step("Todos should not be visible <table>")
-    public async todosShouldNotBeVisible(table: Table) {
-        for (const row of table.getTableRows()) {
-            await this.assertNotVisible(row.getCell("description"));
-        }
-    }
-
-    @Step("Mark todo <item> as done")
-    public async markTodoAsDone(item: string) {
-        await this.completeSingle(item);
-    }
-
-    @Step("Complete todos <table>")
-    public async completeTodos(table: Table) {
-        for (const row of table.getTableRows()) {
-            await this.completeSingle(row.getCell("description"));
-        }
-    }
-
-    @Step("Todo <item> should be marked as completed")
-    public async todoShouldBeCompleted(item: string) {
-        await this.assertCompleted(item);
-    }
-
-    @Step("Todos should be marked as completed <table>")
-    public async todosShouldBeCompleted(table: Table) {
-        for (const row of table.getTableRows()) {
-            await this.assertCompleted(row.getCell("description"));
-        }
-    }
-
-    @Step("Todos should not be marked as completed <table>")
-    public async todosShouldNotBeCompleted(table: Table) {
-        for (const row of table.getTableRows()) {
-            await this.assertNotCompleted(row.getCell("description"));
-        }
-    }
-
     @Step("Delete todo <item>")
     public async deleteTodo(item: string) {
-        await this.deleteSingle(item);
-    }
-
-    @Step("Delete todos <table>")
-    public async deleteTodos(table: Table) {
-        for (const row of table.getTableRows()) {
-            await this.deleteSingle(row.getCell("description"));
-        }
+        const todo = this.todoItem(item);
+        await todo.hover();
+        await todo.getByRole("button", { name: "Delete" }).click();
     }
 }
