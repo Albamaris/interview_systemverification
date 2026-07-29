@@ -1,4 +1,5 @@
 # Add Todo Items
+tags: jira-QAT-101, todo, add, smoke, P1
 
 |description     |
 |-----------------|

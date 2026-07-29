@@ -1080,6 +1080,63 @@ gauge run specs
 
 ---
 
+## Schritt 19: Jira-Rückverfolgbarkeit + Tag-Konvention
+
+**Ziel:** Specs sollen aussehen wie in einem echten Projekt gepflegt — mit
+Rückverfolgbarkeit zu Jira-Testfällen und einer durchdachten Tag-Struktur.
+Keine echte Jira-API-Anbindung nötig, nur saubere Dokumentation über
+Gauges eingebautes Tag-Feature (`tags: ...` direkt unter der Überschrift).
+
+**Tag-Konvention (vier Kategorien):**
+| Kategorie | Beispiel | Zweck |
+|---|---|---|
+| Jira-Rückverfolgbarkeit | `jira-QAT-101` | Verknüpfung zum Jira-Testfall/Story |
+| Fachliches Modul | `todo`, `add`, `complete`, `delete` | Welcher Funktionsbereich |
+| Test-Typ | `smoke`, `regression`, `functional` | Testebene/-zweck |
+| Priorität | `P1`, `P2`, `P3` | Kritikalität |
+
+**Angewendet (`tags:`-Zeile direkt nach der `#`-Überschrift, vor der Tabelle):**
+```markdown
+# Add Todo Items
+tags: jira-QAT-101, todo, add, smoke, P1
+...
+
+# Complete Todo Items
+tags: jira-QAT-102, todo, complete, regression, P2
+...
+
+# Delete Todo Items
+tags: jira-QAT-103, todo, delete, regression, P2
+...
+```
+
+**Talking Points:**
+- **`jira-QAT-1xx` sind bewusst fiktive Platzhalter-IDs** — Muster ist
+  identisch zu echten Jira-Keys (`PROJEKTKÜRZEL-NUMMER`), aber ohne
+  Anbindung an eine echte Jira-Instanz. Im echten Projekt würde man hier
+  die tatsächliche Story-/Testfall-ID eintragen.
+- **Direkter Nutzen der Tags:** Filterbar über den schon bekannten
+  `-t`/`--tags`-Flag (siehe Befehlsreferenz) — z.B. nur Smoke-Tests
+  laufen lassen, oder gezielt den zu einem Jira-Ticket gehörenden Test:
+  ```
+  gauge run -t "smoke" specs
+  gauge run -t "jira-QAT-102" specs
+  ```
+- **Skaliert gut:** Je mehr Specs dazukommen, desto wichtiger wird diese
+  Struktur — z.B. "nur Regression vor einem Release" oder "nur P1" in
+  der CI-Pipeline laufen lassen (`docker run ... gauge run -t "P1" specs`).
+
+**Befehl (im Terminal ausführen, lokal validieren + Tag-Filter demonstrieren):**
+```
+gauge run specs
+gauge run -t "smoke" specs
+gauge run -t "jira-QAT-102" specs
+```
+
+**Status:** ⏳ ausstehend — bitte Ergebnis mitteilen
+
+---
+
 # Teil 7: Live-Coding-Übung (Simulation einer echten Interview-Aufgabe)
 
 **Gestellte Aufgabe:** Neues Szenario "Todo-Eintrag löschen" ergänzen.

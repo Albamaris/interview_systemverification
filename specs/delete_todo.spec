@@ -1,4 +1,5 @@
 # Delete Todo Items
+tags: jira-QAT-103, todo, delete, regression, P2
 
 |description     |
 |-----------------|

@@ -1,4 +1,5 @@
 # Complete Todo Items
+tags: jira-QAT-102, todo, complete, regression, P2
 
 |description     |shouldComplete|
 |-----------------|--------------|
