@@ -8,32 +8,25 @@ Ziel: Frontend-Testautomatisierung mit Gauge (Spec) + Playwright (Automatisierun
 ## 1. Setup-Sequenz (von Null zum laufenden Framework)
 
 ```powershell
-# 1. Voraussetzungen prüfen
 node -v
 npm -v
 
-# 2. Gauge installieren
 npm install -g @getgauge/cli
 gauge version
 
-# 3. Projekt anlegen (TypeScript-Template)
 gauge init ts
 
-# 4. Taiko raus, Playwright rein
 npm uninstall taiko
 npm install playwright
 npx playwright install chromium
+npm install csv-parse
 
-# 5. Framework lokal ausführen
 gauge run specs
-# oder kurz, falls npm-Script vorhanden:
-npm test
+# oder: npm test
 
-# 6. Docker
 docker build -t gauge-playwright-demo .
 docker run --rm gauge-playwright-demo
 
-# 7. CI/CD
 git init
 git add .
 git commit -m "..."
@@ -41,218 +34,96 @@ git remote add origin <repo-url>
 git push -u origin master   # Branch-Name im Workflow-Trigger muss passen!
 ```
 
-**Windows-Stolperstein (falls `gauge version` nach der Installation ein
-Fenster aufblitzen lässt und nichts tut):** Der npm-Installer legt unter
-`%AppData%\npm\node_modules\@getgauge\cli\bin\` eine leere Platzhalter-Datei
-`gauge` (ohne Endung) NEBEN der echten `gauge.exe` ab. Windows findet die
-leere Datei zuerst statt automatisch `.exe` zu ergänzen. Fix: die leere
-Datei umbenennen (`Rename-Item ... gauge.placeholder.bak`).
+**Windows-Stolperstein** (falls `gauge version` ein Fenster aufblitzen
+lässt und nichts tut): Leere Platzhalter-Datei `gauge` (ohne Endung) liegt
+in `%AppData%\npm\node_modules\@getgauge\cli\bin\` NEBEN der echten
+`gauge.exe`. Fix: `Rename-Item` auf die leere Datei, dann findet Windows
+automatisch `gauge.exe`.
+
+**tsconfig-Stolperstein:** `"ignoreDeprecations"` akzeptiert in TS 5.9
+NUR den exakten String `"5.0"` (die Warnmeldung schlägt irreführend
+`"6.0"` vor). Zusätzlich `"skipLibCheck": true` setzen — sonst schlägt
+`npx tsc --noEmit` in `playwright-core`s eigenen `.d.ts`-Dateien fehl
+(fehlende DOM-Typen, weil `lib` kein `"dom"` enthält).
 
 ---
 
-## 2. Finale Spec-Struktur — ein datengetriebenes File pro fachlichem Test
-
-```
-specs/
-  add_todo.spec        → "Add Todo Items"
-  complete_todo.spec   → "Complete Todo Items"
-  delete_todo.spec     → "Delete Todo Items"
-```
-Zielseite: `https://demo.playwright.dev/todomvc` (offizielle Playwright-Demo).
-Jede Spec hat eine Tabelle DIREKT unter der `#`-Überschrift → Gauge führt
-das Szenario darunter automatisch einmal PRO ZEILE aus, jede Zeile ist ein
-vollständig unabhängiger Testfall (frische Seite pro Szenario).
-
-**`specs/add_todo.spec`:**
-```markdown
-# Add Todo Items
-
-|description     |
-|-----------------|
-|Buy milk         |
-|Walk the dog     |
-|Clean the house  |
-
-## Add a todo item and verify it appears
-* Open the todo app
-* Add todo <description>
-* Todo <description> should be visible
-```
-
-**`specs/complete_todo.spec`** (zwei Spalten — zweite Spalte steuert eine
-Bedingung im Step-Code):
-```markdown
-# Complete Todo Items
-
-|description     |shouldComplete|
-|-----------------|--------------|
-|Buy milk         |true          |
-|Walk the dog     |false         |
-
-## Add a todo item and set its completion state
-* Open the todo app
-* Add todo <description>
-* Set completed state of <description> to <shouldComplete>
-* Completion state of <description> should be <shouldComplete>
-```
-
-**`specs/delete_todo.spec`:**
-```markdown
-# Delete Todo Items
-
-|description     |
-|-----------------|
-|Buy milk         |
-|Walk the dog     |
-
-## Add and delete a todo item
-* Open the todo app
-* Add todo <description>
-* Delete todo <description>
-* Todo <description> should not be visible
-```
-
----
-
-## 3. Finale Step-Implementierung (`tests/StepImplementation.ts`)
-
-```typescript
-import { Step, BeforeSuite, AfterSuite, BeforeScenario, AfterScenario } from "gauge-ts";
-import { chromium, Browser, Page, Locator } from "playwright";
-import assert = require("assert");
-
-export default class StepImplementation {
-    private browser!: Browser;
-    private page!: Page;
-
-    @BeforeSuite()
-    public async beforeSuite() {
-        this.browser = await chromium.launch({ headless: process.env.HEADLESS !== "false" });
-    }
-
-    @AfterSuite()
-    public async afterSuite() {
-        await this.browser.close();
-    }
-
-    @BeforeScenario()
-    public async beforeScenario() {
-        this.page = await this.browser.newPage();
-    }
-
-    @AfterScenario()
-    public async afterScenario() {
-        await this.page.close();
-    }
-
-    private todoItem(item: string): Locator {
-        return this.page.getByTestId("todo-item").filter({ hasText: item });
-    }
-
-    private async assertCompleted(item: string) {
-        const classAttr = await this.todoItem(item).getAttribute("class");
-        assert.ok(classAttr?.includes("completed"));
-    }
-
-    private async assertNotCompleted(item: string) {
-        const classAttr = await this.todoItem(item).getAttribute("class");
-        assert.ok(!classAttr?.includes("completed"));
-    }
-
-    private toBoolean(value: unknown): boolean {
-        if (typeof value === "boolean") return value;
-        if (value === "true") return true;
-        if (value === "false") return false;
-        throw new Error(`Expected "true" or "false", got: ${JSON.stringify(value)}`);
-    }
-
-    @Step("Wait for <seconds> seconds") // demonstration purposes only — avoid fixed waits in real tests
-    public async waitForSeconds(seconds: unknown) {
-        const value = typeof seconds === "number" ? seconds : Number(seconds);
-        if (!Number.isFinite(value) || value < 0) {
-            throw new Error(`"Wait for <seconds> seconds" expects a non-negative number, got: ${JSON.stringify(seconds)}`);
-        }
-        await this.page.waitForTimeout(value * 1000);
-    }
-
-    @Step("Open the todo app")
-    public async openTodoApp() {
-        await this.page.goto("https://demo.playwright.dev/todomvc");
-    }
-
-    @Step("Add todo <item>")
-    public async addTodo(item: string) {
-        const input = this.page.getByPlaceholder("What needs to be done?");
-        await input.fill(item);
-        await input.press("Enter");
-    }
-
-    @Step("Todo <item> should be visible")
-    public async todoShouldBeVisible(item: string) {
-        const todo = this.page.getByTestId("todo-title").filter({ hasText: item });
-        await todo.waitFor({ state: "visible" });
-        assert.ok(await todo.isVisible());
-    }
-
-    @Step("Todo <item> should not be visible")
-    public async todoShouldNotBeVisible(item: string) {
-        const todo = this.page.getByTestId("todo-title").filter({ hasText: item });
-        await todo.waitFor({ state: "hidden" });
-        assert.ok(!(await todo.isVisible()));
-    }
-
-    @Step("Set completed state of <item> to <state>")
-    public async setCompletedState(item: string, state: unknown) {
-        if (this.toBoolean(state)) {
-            await this.todoItem(item).getByRole("checkbox").check();
-        }
-    }
-
-    @Step("Completion state of <item> should be <state>")
-    public async completionStateShouldBe(item: string, state: unknown) {
-        if (this.toBoolean(state)) {
-            await this.assertCompleted(item);
-        } else {
-            await this.assertNotCompleted(item);
-        }
-    }
-
-    @Step("Hover over todo <item>")
-    public async hoverOverTodo(item: string) {
-        await this.todoItem(item).hover();
-    }
-
-    @Step("Delete todo <item>")
-    public async deleteTodo(item: string) {
-        const todo = this.todoItem(item);
-        await todo.hover();
-        await todo.getByRole("button", { name: "Delete" }).click();
-    }
-}
-```
-
----
-
-## 4. Datengetriebene Specs — das zentrale Gauge-Feature
+## 2. Datengetriebene Specs — das zentrale Gauge-Feature
 
 Eine Tabelle DIREKT unter der `#`/`##`-Überschrift (nicht unter einem
 einzelnen Step!) macht das ganze Szenario darunter datengetrieben: Gauge
 wiederholt es automatisch einmal PRO ZEILE und ersetzt `<spalte>` in jedem
-Step — kein `Table`-Objekt im Code nötig, Steps bleiben einfache
-Einzelwert-Funktionen. Ein Test Manager kann eine neue Zeile ergänzen
-(`|Buy bread|true|`) und hat sofort einen neuen, vollständigen Testfall,
-ohne Code anzufassen.
+Step — kein `Table`-Objekt im Code nötig. Neue Testdaten = neue Zeile,
+kein Code nötig.
 
-**Wichtiger Talking Point:** Reale Drittanbieter-Suchmaschinen (Google,
-DuckDuckGo) live in automatisierten Tests anzusteuern ist KEIN gutes
-Beispiel dafür — beide zeigen CAPTCHA-Challenges bei Bot-Traffic (live
-getestet: DuckDuckGo antwortet mit "Select all squares containing a
-duck"). Für echte Projekte: externe Abhängigkeiten mocken oder gegen eine
-eigene, kontrollierte Umgebung testen — nicht gegen fremde Live-Seiten.
+**Talking Point:** Reale Drittanbieter-Suchmaschinen (Google, DuckDuckGo)
+live in Tests anzusteuern ist KEIN gutes Beispiel — beide zeigen CAPTCHA-
+Challenges bei Bot-Traffic (live getestet: DuckDuckGo → "Select all
+squares containing a duck"). Externe Abhängigkeiten mocken oder gegen
+eigene, kontrollierte Umgebung testen.
 
 ---
 
-## 5. Dockerfile
+## 3. Context- und Teardown-Steps
+
+| Gauge-Spec-Konzept | Läuft wann | Code-Äquivalent |
+|---|---|---|
+| Context Steps (unter `#`, vor erstem `##`) | Vor JEDEM Szenario | `@BeforeScenario()` |
+| Teardown Steps (nach `___`, am Dateiende) | Nach JEDEM Szenario | `@AfterScenario()` |
+
+Code-Hooks für technisches Plumbing (Browser-Seite öffnen/schließen,
+für Test Manager uninteressant). Context/Teardown-Steps IN der Spec für
+fachlich relevantes Setup/Cleanup (Login/Logout, Screenshot). Bei mehreren
+Datenzeilen läuft Teardown MEHRFACH — einmal pro Zeile/Szenario-Ausführung
+(live nachgewiesen: `delete_todo.spec` mit 2 Zeilen → 2 Screenshots).
+
+Jede Zeile in einer Spec, die keine Überschrift/`tags:`/Step/Tabellenzeile/
+`___`-Trenner ist, wird als reiner Kommentar/Dokumentation behandelt —
+nie ausgeführt, aber im Report sichtbar.
+
+---
+
+## 4. Jira-Rückverfolgbarkeit + Tag-Konvention
+
+| Kategorie | Beispiel | Zweck |
+|---|---|---|
+| Jira-Rückverfolgbarkeit | `jira-QAT-101` | Verknüpfung zum Jira-Testfall/Story (fiktive Platzhalter-IDs) |
+| Fachliches Modul | `todo`, `add`, `complete`, `delete`, `csv`, `database` | Funktionsbereich |
+| Test-Typ | `smoke`, `regression` | Testebene/-zweck |
+| Priorität | `P1`, `P2` | Kritikalität |
+
+```powershell
+gauge run -t "smoke" specs
+gauge run -t "jira-QAT-102" specs
+```
+
+---
+
+## 5. Externe Datenquellen: CSV und Datenbank
+
+Gauges native Tabellen-Syntax funktioniert NUR mit Markdown-Tabellen
+direkt in der `.spec`-Datei — nicht mit CSV/DB. Für externe Quellen
+schreibt man einen Step, der selbst liest (`loadCsvRows()` bzw.
+`getAllTodoDescriptions()` in `tests/StepImplementation.ts`/`tests/db.ts`).
+Muster: Testdaten kommen von außen (Testmanager/Fachbereich pflegt CSV
+oder DB), Step-Code bleibt gleich einfach.
+
+**SQLite-Wahl:** `node:sqlite` (in Node 22+ eingebaut, kein npm-Paket,
+kein natives Kompilieren). Verifiziert: läuft lokal (Node 22.14) UND im
+Docker-Image (`mcr.microsoft.com/playwright:v1.62.0-noble` bringt Node
+24.18 mit). DB liest Testdaten (`todos`-Tabelle) UND schreibt
+Testergebnisse zurück (`test_results`-Tabelle, via `@AfterScenario`-Hook
+mit `ExecutionContext` → `getCurrentScenario().getIsFailing()`).
+
+**DB ansehen:** VS-Code-Extension "SQLite Viewer" (`qwtel.sqlite-viewer`)
+installiert — `.db`-Datei anklicken öffnet Tabellen-Ansicht. Oder CLI:
+```powershell
+& "$env:LOCALAPPDATA\Android\Sdk\platform-tools\sqlite3.exe" testdata\gauge.db ".tables" "SELECT * FROM test_results;"
+```
+
+---
+
+## 6. Dockerfile
 
 ```dockerfile
 FROM mcr.microsoft.com/playwright:v1.62.0-noble
@@ -264,12 +135,11 @@ COPY . .
 CMD ["gauge", "run", "specs"]
 ```
 Versionsnummer im Image-Tag **muss** zur `playwright`-Version in
-`package.json` passen (Browser-Binary ↔ Client-Library dürfen nicht
-auseinanderdriften).
+`package.json` passen.
 
 ---
 
-## 6. GitHub Actions (`.github/workflows/ci.yml`)
+## 7. GitHub Actions (`.github/workflows/ci.yml`)
 
 ```yaml
 name: Gauge Playwright Tests
@@ -290,15 +160,12 @@ jobs:
         uses: actions/upload-artifact@v4
         with: { name: gauge-html-report, path: reports/html-report }
 ```
-Branch im Trigger muss zum tatsächlichen Default-Branch des Repos passen
-(`main` vs. `master` — leicht zu übersehen). `schedule` läuft unabhängig
-von Pushes (nightly regression); `workflow_dispatch` erlaubt manuelles
-Auslösen über den "Run workflow"-Button im Actions-Tab. Alle drei
-Trigger-Arten (push/schedule/workflow_dispatch) live im Repo verifiziert.
+Branch im Trigger muss zum Default-Branch passen. Alle drei Trigger-Arten
+(push/schedule/workflow_dispatch) live verifiziert.
 
 ---
 
-## 7. Nützliche Befehle (Cheat-Referenz)
+## 8. Nützliche Befehle (Cheat-Referenz)
 
 | Befehl | Zweck |
 |---|---|
@@ -310,58 +177,51 @@ Trigger-Arten (push/schedule/workflow_dispatch) live im Repo verifiziert.
 | `gauge run -v` | Verbose (Step-Level statt Szenario-Level) |
 | `$env:HEADLESS="false"; gauge run ...` | Browser sichtbar (PowerShell-Syntax!) |
 | `npx playwright codegen <url>` | Locators durch Klicken generieren lassen |
+| `npx tsc --noEmit` | TypeScript-Sanity-Check vor dem Testlauf |
 
 ---
 
-## 8. Kernkonzepte — Talking Points
+## 9. Kernkonzepte — Talking Points
 
-- **Gauge trennt WAS von WIE:** Spec (Markdown, lesbar für Nicht-Techniker)
-  vs. Step-Implementierung (Code). Guter Anknüpfungspunkt für Sales-Sicht.
-- **Ein Spec pro fachlichem Test, gemeinsame Step-Bibliothek:** So wächst
-  eine echte Testsuite — Test Manager pflegt `.spec` + Tabellen, ohne den
-  TypeScript-Code anzufassen.
-- **Datengetriebene Specs (Abschnitt 4):** Zeile = unabhängiger Testfall.
-  Neue Testdaten = neue Zeile, kein Code nötig.
-- **Playwright ist hier nur Library, nicht Runner:** `playwright` (nicht
-  `@playwright/test`) wird innerhalb der Gauge-Steps aufgerufen — wie
-  Selenium/Playwright als Library in JUnit-Steps.
+- **Gauge trennt WAS von WIE:** Spec (Markdown) vs. Step-Implementierung
+  (Code) — Anknüpfungspunkt für Sales-Sicht.
+- **Datengetriebene Specs:** Zeile = unabhängiger Testfall, neue Testdaten
+  ohne Code-Änderung.
+- **Playwright ist nur Library, nicht Runner:** `playwright`, nicht
+  `@playwright/test` — Gauge ist der Runner.
 - **Locators statt CSS-Selektoren:** `getByRole`, `getByTestId`,
-  `getByPlaceholder` — robuster, näher an dem, was ein Nutzer sieht.
-- **Auto-Waiting:** `.fill()`, `.click()`, `.check()` warten automatisch auf
-  Actionability (visible, stable, enabled) — kein `sleep()`.
-- **Playwrights `isVisible()` prüft `display`/Bounding-Box, nicht `opacity`.**
-  TodoMVC-Löschbutton ist `display:none` bis `:hover` → Hover-Step ist
-  funktional notwendig, nicht nur kosmetisch (selbst nachgewiesen).
-- **Docker = reproduzierbare Umgebung:** Gleicher Befehl (`docker build` +
-  `docker run`) lokal wie in CI — kein Auseinanderdriften.
-- **Typsicherheit endet an der Spec-Grenze:** Gauge-Parameter aus der
-  `.spec`-Datei sind für TypeScript unsichtbar. `gauge-ts` versucht
-  automatisch String→Number/Boolean-Konvertierung (`PrimitiveParser`),
-  aber bei ungültigen Werten (`"abc"`) entstehen **stille** Fehler
-  (`NaN` → `setTimeout(NaN)` läuft ~sofort durch, ohne Crash) statt eines
-  Fehlers — deshalb: Parameter an der Grenze explizit validieren
-  (`toBoolean()`-Helper macht genau das für den `shouldComplete`-Wert).
-- **Externe Live-Abhängigkeiten meiden:** Suchmaschinen/fremde Seiten in
-  Tests haben Bot-Erkennung/CAPTCHAs — mocken oder eigene Umgebung nutzen.
-- **Gauge generiert automatisch HTML-Reports** (`reports/html-report/`) —
-  als CI-Artefakt archivierbar.
+  `getByPlaceholder`.
+- **Auto-Waiting:** kein `sleep()`, Playwright wartet auf Actionability.
+- **`isVisible()` prüft `display`/Bounding-Box, nicht `opacity`** —
+  TodoMVC-Löschbutton braucht daher echten `.hover()` (selbst verifiziert).
+- **Docker = reproduzierbare Umgebung**, gleicher Befehl lokal wie in CI.
+- **Typsicherheit endet an der Spec-Grenze:** `gauge-ts`s `PrimitiveParser`
+  konvertiert Zahlen/Booleans automatisch, aber ungültige Werte (`"abc"`)
+  erzeugen stille Fehler (`NaN` → `setTimeout(NaN)` läuft durch) — deshalb
+  Parameter an der Grenze explizit validieren.
+- **Zwei Tabellen-Muster nicht verwechseln:** Inline-Step-Tabelle vs.
+  datengetriebene Spec.
+- **Externe Datenquellen (CSV/DB):** Step liest selbst, kein Gauge-
+  Kernfeature nötig; externe Live-Abhängigkeiten (Suchmaschinen) meiden.
+- **Context/Teardown-Steps** laufen pro Szenario, nicht einmal pro Datei.
+- **Gauge generiert automatisch HTML-Reports** — als CI-Artefakt
+  archivierbar.
 
 ---
 
-## 9. Für die Sales-Frage ("Wie erklärst du einem Kunden den Nutzen?")
+## 10. Für die Sales-Frage ("Wie erklärst du einem Kunden den Nutzen?")
 
-- Gauge-Specs sind lesbares Markdown → auch Product Owner/Kunden können
-  Testabdeckung nachvollziehen, ohne Code zu lesen.
-- Docker sorgt dafür, dass "es funktioniert auf meiner Maschine" kein Thema
-  mehr ist — gleiches Ergebnis lokal, beim Kunden, in der Pipeline.
-- CI/CD verhindert, dass kaputte Änderungen in Produktion gelangen —
-  jeder Push wird automatisch getestet, Reports als Nachweis.
+- Gauge-Specs sind lesbares Markdown → Product Owner/Kunden verstehen
+  Testabdeckung ohne Code zu lesen.
+- Docker: "funktioniert auf meiner Maschine" ist kein Thema mehr.
+- CI/CD verhindert kaputte Änderungen in Produktion — automatisch bei
+  jedem Push, nachts, oder manuell auslösbar.
 
 ---
 
-## 10. Eigene Referenzprojekte
+## 11. Eigene Referenzprojekte
 
 - `github.com/Albamaris/ecommerce-test-automation` — Page Object Pattern,
   GitHub Actions + Jenkins
 - `github.com/Albamaris/interview_systemverification` — dieses Demo-Framework
-  (heute gebaut, GitHub Actions grün, alle drei Trigger-Arten verifiziert)
+  (heute gebaut: Gauge + Playwright + Docker + CI/CD + Jira-Tags + CSV/DB-Anbindung)

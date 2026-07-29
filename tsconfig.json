@@ -8,7 +8,7 @@
         "lib": ["es2016"],                             /* Specify library files to be included in the compilation:  */
         /* Module Resolution Options */
         "moduleResolution": "node",
-        "ignoreDeprecations": "5.0",
+        "ignoreDeprecations": "6.0",
         "skipLibCheck": true,
     },
     "exclude": [
