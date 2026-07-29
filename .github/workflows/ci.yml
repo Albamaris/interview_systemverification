@@ -1,0 +1,27 @@
+name: Gauge Playwright Tests
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Build Docker image
+        run: docker build -t gauge-playwright-demo .
+
+      - name: Run tests in container
+        run: docker run --rm -v ${{ github.workspace }}/reports:/app/reports gauge-playwright-demo
+
+      - name: Upload HTML report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: gauge-html-report
+          path: reports/html-report
