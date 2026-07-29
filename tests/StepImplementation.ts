@@ -1,5 +1,8 @@
 import { Step, BeforeSuite, AfterSuite, BeforeScenario, AfterScenario } from "gauge-ts";
 import { chromium, Browser, Page, Locator } from "playwright";
+import { parse } from "csv-parse/sync";
+import { readFileSync } from "fs";
+import { join } from "path";
 import assert = require("assert");
 
 export default class StepImplementation {
@@ -45,6 +48,11 @@ export default class StepImplementation {
         if (value === "true") return true;
         if (value === "false") return false;
         throw new Error(`Expected "true" or "false", got: ${JSON.stringify(value)}`);
+    }
+
+    private loadCsvRows(path: string): { description: string }[] {
+        const csvContent = readFileSync(join(process.cwd(), path), "utf-8");
+        return parse(csvContent, { columns: true, skip_empty_lines: true, trim: true });
     }
 
     @Step("Wait for <seconds> seconds") // demonstration purposes only — avoid fixed waits in real tests
@@ -108,5 +116,31 @@ export default class StepImplementation {
         const todo = this.todoItem(item);
         await todo.hover();
         await todo.getByRole("button", { name: "Delete" }).click();
+    }
+
+    @Step("Take a screenshot of the final state")
+    public async takeFinalScreenshot() {
+        await this.page.screenshot({ path: `reports/screenshots/${Date.now()}.png` });
+    }
+
+    @Step("Add todo items from CSV file <path>")
+    public async addTodoItemsFromCsv(path: string) {
+        const rows = this.loadCsvRows(path);
+        const input = this.page.getByPlaceholder("What needs to be done?");
+        for (const row of rows) {
+            await input.fill(row.description);
+            await input.press("Enter");
+            await this.waitForSeconds(1); // demonstration purposes only — avoid fixed waits in real tests
+        }
+    }
+
+    @Step("All todo items from CSV file <path> should be visible")
+    public async allTodoItemsFromCsvShouldBeVisible(path: string) {
+        const rows = this.loadCsvRows(path);
+        for (const row of rows) {
+            const todo = this.page.getByTestId("todo-title").filter({ hasText: row.description });
+            await todo.waitFor({ state: "visible" });
+            assert.ok(await todo.isVisible());
+        }
     }
 }

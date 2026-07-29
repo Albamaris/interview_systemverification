@@ -7,6 +7,7 @@
     "docker:test": "docker run --rm gauge-playwright-demo"
   },
   "dependencies": {
+    "csv-parse": "^7.0.1",
     "gauge-ts": "0.5.1",
     "playwright": "^1.62.0",
     "ts-node": "^10.9.2",

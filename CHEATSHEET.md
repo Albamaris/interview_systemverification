@@ -1133,6 +1133,156 @@ gauge run -t "smoke" specs
 gauge run -t "jira-QAT-102" specs
 ```
 
+**Ergebnis:** Alles grün. Nutzer hat außerdem selbst freien Text
+("This is an comment...", "We can comment anywhere") in die Specs
+eingefügt, um zu testen, ob unerkannte Zeilen als Dokumentation ignoriert
+werden — bestätigt: jede Zeile, die keine Überschrift/`tags:`/Step/
+Tabellenzeile/`___`-Trenner ist, wird als reiner Beschreibungstext
+behandelt (im Report sichtbar, nie ausgeführt).
+
+**Status:** ✅
+
+---
+
+## Schritt 20: Context- und Teardown-Steps
+
+**Nutzerfrage:** Verständnis der Gauge-Doku zu Teardown-Steps (`___`
+nach dem letzten Szenario, laufen nach JEDEM Szenario der Spec-Datei).
+
+**Erklärt über die Analogie zu unseren eigenen Code-Hooks:**
+| Gauge-Spec-Konzept | Läuft wann | Unser Code-Äquivalent |
+|---|---|---|
+| Context Steps (unter `#`, vor erstem `##`) | Vor JEDEM Szenario | `@BeforeScenario()` |
+| Teardown Steps (nach `___`) | Nach JEDEM Szenario | `@AfterScenario()` |
+
+**Unterschied im Einsatzzweck:** Code-Hooks für technisches Plumbing
+(Browser-Seite öffnen/schließen — für den Test Manager uninteressant).
+Context/Teardown-Steps IN der Spec für fachlich relevantes Setup/Cleanup,
+das ein Test Manager sehen/verstehen soll (z.B. Login/Logout in der
+Gauge-Doku-Beispiel-Spec).
+
+**Live-Demonstration in `specs/delete_todo.spec` ergänzt:**
+```markdown
+* Todo <description> should not be visible
+
+___
+* Take a screenshot of the final state
+```
+
+**Neuer Step in `tests/StepImplementation.ts`:**
+```typescript
+@Step("Take a screenshot of the final state")
+public async takeFinalScreenshot() {
+    await this.page.screenshot({ path: `reports/screenshots/${Date.now()}.png` });
+}
+```
+
+**Talking Point:** `delete_todo.spec` hat 2 Datenzeilen ("Buy milk",
+"Walk the dog") → der Teardown-Step läuft 2×, erzeugt 2 Screenshots —
+sichtbarer Beweis, dass Teardown "pro Szenario-Ausführung" bedeutet, nicht
+"einmal am Ende der Datei".
+
+**Befehl (im Terminal ausführen):**
+```
+gauge run specs/delete_todo.spec
+```
+Danach `reports/screenshots/` prüfen (sollten 2 `.png`-Dateien liegen).
+
+**Status:** ✅ Bestätigt: 2 Screenshots erzeugt, Teardown läuft pro Szenario
+
+---
+
+## Schritt 21: CSV als externe Datenquelle
+
+**Wichtige Klarstellung:** Gauges native Tabellen-Syntax (Inline-Step-
+Tabelle und datengetriebene Spec, Schritt 16/17) funktioniert NUR mit
+Markdown-Tabellen direkt in der `.spec`-Datei — nicht mit externen
+CSV-Dateien. Für CSV als Datenquelle schreibt man stattdessen einen Step,
+der die Datei selbst einliest (kein Gauge-Kernfeature, aber ein sehr
+gängiges reales Muster: Testdaten in einer Datei, gepflegt vom
+Testmanager/Fachbereich, getrennt vom Code).
+
+**`testdata/todos.csv`:**
+```csv
+description
+Buy milk
+Walk the dog
+Clean the house
+```
+
+**`specs/add_todo_from_csv.spec`:**
+```markdown
+# Add Todo Items From CSV
+tags: jira-QAT-104, todo, add, csv, regression
+
+## Add todo items loaded from an external CSV file
+* Open the todo app
+* Add todo items from CSV file "testdata/todos.csv"
+* All todo items from CSV file "testdata/todos.csv" should be visible
+```
+
+**Neue Dependency:** `csv-parse` (Standard-Bibliothek für CSV-Parsing in
+Node — robuster als selbstgestricktes String-Split, z.B. bei Kommas
+innerhalb von Werten oder Anführungszeichen).
+
+**Befehl (im Terminal ausführen):**
+```
+npm install csv-parse
+```
+
+**Ergebnis:** installiert (`csv-parse@^7.0.1` in `package.json`).
+
+**Nebenklärung:** Nutzer fragte, ob die CSV als eine einzige Zeile
+(`description,Buy Milk,Walk the dog,Clean the house`) geschrieben werden
+sollte. Klargestellt: CSV-Grundregel — jede ZEILE ist ein Datensatz, Kommas
+trennen nur Spalten INNERHALB einer Zeile. Bei einer Spalte (`description`)
+gehört daher jeder Wert auf eine eigene Zeile. Das Ein-Zeilen-Format hätte
+zu 0 Datensätzen geführt (nur eine "Kopfzeile" mit 4 Spaltennamen, keine
+Datenzeile mehr danach).
+
+**Neue Steps in `tests/StepImplementation.ts`:**
+```typescript
+import { parse } from "csv-parse/sync";
+import { readFileSync } from "fs";
+import { join } from "path";
+
+private loadCsvRows(path: string): { description: string }[] {
+    const csvContent = readFileSync(join(process.cwd(), path), "utf-8");
+    return parse(csvContent, { columns: true, skip_empty_lines: true, trim: true });
+}
+
+@Step("Add todo items from CSV file <path>")
+public async addTodoItemsFromCsv(path: string) {
+    const rows = this.loadCsvRows(path);
+    const input = this.page.getByPlaceholder("What needs to be done?");
+    for (const row of rows) {
+        await input.fill(row.description);
+        await input.press("Enter");
+    }
+}
+
+@Step("All todo items from CSV file <path> should be visible")
+public async allTodoItemsFromCsvShouldBeVisible(path: string) {
+    const rows = this.loadCsvRows(path);
+    for (const row of rows) {
+        const todo = this.page.getByTestId("todo-title").filter({ hasText: row.description });
+        await todo.waitFor({ state: "visible" });
+        assert.ok(await todo.isVisible());
+    }
+}
+```
+
+**Talking Point:** `process.cwd()` löst relativ zum Projekt-Root auf (dort,
+wo `gauge run` gestartet wird / wo `manifest.json` liegt) — funktioniert
+lokal UND im Docker-Container gleichermaßen, da `testdata/` durch die
+`.dockerignore` nicht ausgeschlossen wird und via `COPY . .` mit ins Image
+wandert.
+
+**Befehl (im Terminal ausführen):**
+```
+gauge run specs/add_todo_from_csv.spec
+```
+
 **Status:** ⏳ ausstehend — bitte Ergebnis mitteilen
 
 ---
