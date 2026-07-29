@@ -1,8 +1,9 @@
-import { Step, BeforeSuite, AfterSuite, BeforeScenario, AfterScenario } from "gauge-ts";
+import { Step, BeforeSuite, AfterSuite, BeforeScenario, AfterScenario, ExecutionContext } from "gauge-ts";
 import { chromium, Browser, Page, Locator } from "playwright";
 import { parse } from "csv-parse/sync";
 import { readFileSync } from "fs";
 import { join } from "path";
+import { getAllTodoDescriptions, recordTestResult, getDb } from "./db";
 import assert = require("assert");
 
 export default class StepImplementation {
@@ -12,11 +13,15 @@ export default class StepImplementation {
     @BeforeSuite()
     public async beforeSuite() {
         this.browser = await chromium.launch({ headless: process.env.HEADLESS !== "false" });
+        getDb(); // creates/seeds testdata/gauge.db on first use
     }
 
     @AfterSuite()
     public async afterSuite() {
         await this.browser.close();
+        const results = getDb().prepare("SELECT scenario_name, status, executed_at FROM test_results ORDER BY id DESC LIMIT 20").all();
+        console.log("Last test results written to testdata/gauge.db:");
+        console.log(results);
     }
 
     @BeforeScenario()
@@ -25,8 +30,11 @@ export default class StepImplementation {
     }
 
     @AfterScenario()
-    public async afterScenario() {
+    public async afterScenario(context: ExecutionContext) {
         await this.page.close();
+        const scenario = context.getCurrentScenario();
+        const spec = context.getCurrentSpec();
+        recordTestResult(spec?.getName(), scenario?.getName(), scenario?.getIsFailing() ? "FAILED" : "PASSED");
     }
 
     private todoItem(item: string): Locator {
@@ -139,6 +147,24 @@ export default class StepImplementation {
         const rows = this.loadCsvRows(path);
         for (const row of rows) {
             const todo = this.page.getByTestId("todo-title").filter({ hasText: row.description });
+            await todo.waitFor({ state: "visible" });
+            assert.ok(await todo.isVisible());
+        }
+    }
+
+    @Step("Add todo items from the database")
+    public async addTodoItemsFromDatabase() {
+        const input = this.page.getByPlaceholder("What needs to be done?");
+        for (const description of getAllTodoDescriptions()) {
+            await input.fill(description);
+            await input.press("Enter");
+        }
+    }
+
+    @Step("All todo items from the database should be visible")
+    public async allTodoItemsFromDatabaseShouldBeVisible() {
+        for (const description of getAllTodoDescriptions()) {
+            const todo = this.page.getByTestId("todo-title").filter({ hasText: description });
             await todo.waitFor({ state: "visible" });
             assert.ok(await todo.isVisible());
         }

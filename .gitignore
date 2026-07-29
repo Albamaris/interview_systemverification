@@ -11,3 +11,7 @@ node_modules
 
 # lokale Debug-Ausgabe (Schritt 2d im Cheat Sheet)
 gauge_version_output.txt
+
+# SQLite-Datenbank wird zur Laufzeit erzeugt/befüllt (Schema + Seed-Daten
+# via testdata/gauge.db erstellt sich selbst beim ersten Lauf)
+testdata/gauge.db
